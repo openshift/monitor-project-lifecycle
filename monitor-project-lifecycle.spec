@@ -49,14 +49,14 @@
 %global golang_version 1.8.1
 %{!?version: %global version 0.0.1}
 %{!?release: %global release 1}
-%global package_name monitor-project-lifecycle # PACKAGE_NAME
-%global product_name TODO # PRODUCT_NAME
-%global import_path TODO # GO_PACKAGE
+%global package_name origin-monitor-project-lifecycle
+%global product_name OpenShift Monitor Project Lifecycle
+%global import_path github.com/openshift/monitor-project-lifecycle
 
 Name:           %{package_name}
 Version:        %{version}
 Release:        %{release}%{?dist}
-Summary:        TODO
+Summary:        Provides standard metrics and alerting around the end-user project lifecycle.
 License:        ASL 2.0
 URL:            https://%{import_path}
 
@@ -73,7 +73,7 @@ ExclusiveArch:  x86_64 aarch64 ppc64le s390x
 ### AUTO-BUNDLED-GEN-ENTRY-POINT
 
 %description
-TODO
+Provides standard metrics and alerting around the end-user project lifecycle.
 
 %prep
 %if 0%{do_prep}
@@ -112,7 +112,7 @@ PLATFORM="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
 install -d %{buildroot}%{_bindir}
 
 # Install linux components
-for bin in TODO
+for bin in monitor
 do
   echo "+++ INSTALLING ${bin}"
   install -p -m 755 _output/local/bin/${PLATFORM}/${bin} %{buildroot}%{_bindir}/${bin}
@@ -128,7 +128,7 @@ done
 %files
 %doc README.md
 %license LICENSE
-%{_bindir}/TODO
+%{_bindir}/monitor
 # EXAMPLE: Managing configuration
 # %defattr(-,root,root,0700)
 # %dir %config(noreplace) %{_sysconfdir}/origin
