@@ -17,21 +17,19 @@ func main() {
 	http.HandleFunc("/healthz", handleHealthz)
 	http.Handle("/metrics", prometheus.Handler())
 
-	appCreateLatency := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "monitor_project_lifecycle",
-			Name:      "app_create_latency",
-			Help:      "App creation step latency (milliseconds)",
+	appCreateLatency := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "app_create_latency_seconds",
+			Help:    "The latency of various app creation steps.",
+			Buckets: []float64{1, 10, 60, 3 * 60, 5 * 60},
 		},
-		[]string{
-			"step",
-		},
+		[]string{"step"},
 	)
 	prometheus.MustRegister(appCreateLatency)
 
 	go http.ListenAndServe(*addr, nil)
 
-	go runAppCreateSim(appCreateLatency, 100*time.Millisecond)
+	go runAppCreateSim(appCreateLatency, 1*time.Second)
 
 	select {}
 }
@@ -40,20 +38,21 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "ok")
 }
 
-func runAppCreateSim(gauge *prometheus.GaugeVec, interval time.Duration) {
+func runAppCreateSim(metric *prometheus.HistogramVec, interval time.Duration) {
 	steps := map[string]struct {
 		min time.Duration
 		max time.Duration
 	}{
 		"new-app": {min: 1 * time.Second, max: 5 * time.Second},
-		"build":   {min: 1 * time.Minute, max: 4 * time.Minute},
+		"build":   {min: 1 * time.Minute, max: 5 * time.Minute},
 		"deploy":  {min: 1 * time.Minute, max: 5 * time.Minute},
 		"expose":  {min: 10 * time.Second, max: 1 * time.Minute},
 	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
 		for step, r := range steps {
-			latency := rand.Int63n(int64(r.max)-int64(r.min)) + int64(r.min)
-			gauge.With(prometheus.Labels{"step": step}).Set(float64(latency / int64(time.Millisecond)))
+			latency := rng.Int63n(int64(r.max)-int64(r.min)) + int64(r.min)
+			metric.With(prometheus.Labels{"step": step}).Observe(float64(latency / int64(time.Second)))
 		}
 		time.Sleep(interval)
 	}
