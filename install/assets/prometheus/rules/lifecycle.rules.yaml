@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitor-project-lifecycle-rules
+  labels:
+    role: prometheus-rulefiles
+    prometheus: k8s
+data:
+  lifecycle.rules.yaml: |+
+    groups:
+    - name: project.lifecycle.rules
+      rules:
+      - record: app_create_latency_seconds:quantile
+        expr: 'histogram_quantile(0.99, rate(app_create_latency_seconds_bucket[10m]))'
+        labels:
+          quantile: "0.99"
+      - alert: DeployLatencyHigh
+        expr: 'app_create_latency_seconds:quantile{quantile="0.99",step="deploy"} > 200'
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          description: End user lifecycle {{$labels.step}} step has a 99th percentile latency of {{$value}} seconds
