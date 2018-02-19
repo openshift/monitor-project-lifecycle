@@ -1,6 +1,12 @@
 Project Lifecycle Monitoring Application
 ============================
 
+Development Setup
+-----------------
+
+  * Install required packages:
+    * Fedora: `dnf install -y golang git gcc rpm-build make docker createrepo`
+
 Building
 --------
 
@@ -11,13 +17,6 @@ $ make
 ```
 
 To build the RPM and images, run
-
-```
-$ make build-images
-```
-
-If you are running on a non-Linux platform, you can build the images in a
-container with this command
 
 ```
 $ OS_BUILD_ENV_PRESERVE=_output/local/bin hack/env make build-images
