@@ -28,7 +28,7 @@ spec:
       containers:
       - name: monitor-project-lifecycle
         # This image setup is just for local development.
-        image: openshift/origin-monitor-project-lifecycle
+        image: openshift/openshift-monitor-project-lifecycle
         imagePullPolicy: IfNotPresent
         ports:
         - name: web
