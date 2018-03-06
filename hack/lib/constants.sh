@@ -34,7 +34,7 @@ readonly OS_TEST_TARGETS=( )
 # os::build::get_product_vars exports variables that we expect to change
 # depending on the distribution of Origin
 function os::build::get_product_vars() {
-  export OS_BUILD_LDFLAGS_IMAGE_PREFIX="${OS_IMAGE_PREFIX:-"openshift/origin"}"
+  export OS_BUILD_LDFLAGS_IMAGE_PREFIX="${OS_IMAGE_PREFIX:-"openshift/openshift"}"
   export OS_BUILD_LDFLAGS_DEFAULT_IMAGE_STREAMS="${OS_BUILD_LDFLAGS_DEFAULT_IMAGE_STREAMS:-"centos7"}"
 }
 
@@ -142,11 +142,11 @@ function os::util::list_go_deps() {
 
 # OS_ALL_IMAGES is the list of images built by os::build::images.
 readonly OS_ALL_IMAGES=(
-  openshift/origin-monitor-project-lifecycle
+  openshift/openshift-monitor-project-lifecycle
 )
 
 # os::build::images builds all images in this repo.
 function os::build::images() {
-  tag_prefix="${OS_IMAGE_PREFIX:-"openshift/origin"}"
-  os::build::image "${tag_prefix}-monitor-project-lifecycle" images/origin-monitor-project-lifecycle
+  tag_prefix="${OS_IMAGE_PREFIX:-"openshift/openshift"}"
+  os::build::image "${tag_prefix}-monitor-project-lifecycle" images/openshift-monitor-project-lifecycle
 }

@@ -1,9 +1,9 @@
 #
-# The standard name for this image is openshift/monitor-project-lifecycle
+# The standard name for this image is openshift/openshift-monitor-project-lifecycle
 #
 FROM openshift/origin-base
 
-RUN INSTALL_PKGS="origin-monitor-project-lifecycle" && \
+RUN INSTALL_PKGS="openshift-monitor-project-lifecycle" && \
     yum --enablerepo=origin-local-release install -y ${INSTALL_PKGS} && \
     rpm -V ${INSTALL_PKGS} && \
     yum clean all
