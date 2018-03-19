@@ -30,6 +30,16 @@ ignored = ["github.com/openshift/monitor-project-lifecycle/tools*"]
   name = "github.com/prometheus/client_golang"
   version = "v0.8.0"
 
+[[constraint]]
+  name = "github.com/openshift/client-go"
+  # TODO: Switch from using "branch" to using "version" once
+  #       openshift/client-go actually has a release:
+  #
+  #       https://github.com/openshift/client-go/tags
+  #
+  #version = "release-3.9"
+  branch = "release-3.9"
+
 [prune]
   go-tests = true
   unused-packages = true
