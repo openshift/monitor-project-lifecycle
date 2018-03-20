@@ -100,7 +100,10 @@
 [[projects]]
   branch = "master"
   name = "github.com/openshift/api"
-  packages = ["build/v1"]
+  packages = [
+    "build/v1",
+    "project/v1"
+  ]
   revision = "dca24d1902afee9d2be02425a2d7c9f910063631"
 
 [[projects]]
@@ -108,7 +111,9 @@
   name = "github.com/openshift/client-go"
   packages = [
     "build/clientset/versioned/scheme",
-    "build/clientset/versioned/typed/build/v1"
+    "build/clientset/versioned/typed/build/v1",
+    "project/clientset/versioned/scheme",
+    "project/clientset/versioned/typed/project/v1"
   ]
   revision = "42d4abb856ce41c204a6e24342f12be5b5cd9ab8"
 
@@ -326,6 +331,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c7a26b48a8969436b5c3e6f621c0763bbfad9f5240beebd4f251f3d5e6706bee"
+  inputs-digest = "dd7ea5cfd296aad0b3e5dae1e6dda300f491d097ef21594d832f18b0067296e2"
   solver-name = "gps-cdcl"
   solver-version = 1
