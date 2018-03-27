@@ -1,0 +1,34 @@
+package: github.com/openshift/monitor-project-lifecycle
+import:
+- package: github.com/openshift/api
+  subpackages:
+  - template/v1
+- package: github.com/openshift/client-go
+  subpackages:
+  - project/clientset/versioned/typed/project/v1
+  - template/clientset/versioned/typed/template/v1
+- package: github.com/openshift/origin
+  subpackages:
+  - tools/junitreport/pkg/api
+  - tools/junitreport/pkg/builder
+  - tools/junitreport/pkg/builder/flat
+  - tools/junitreport/pkg/builder/nested
+  - tools/junitreport/pkg/cmd
+  - tools/junitreport/pkg/parser
+  - tools/junitreport/pkg/parser/gotest
+  - tools/junitreport/pkg/parser/oscmd
+  - tools/junitreport/pkg/parser/stack
+- package: github.com/prometheus/client_golang
+  subpackages:
+  - prometheus
+- package: k8s.io/api
+  subpackages:
+  - core/v1
+- package: k8s.io/apimachinery
+  subpackages:
+  - pkg/apis/meta/v1
+  - pkg/watch
+- package: k8s.io/client-go
+  subpackages:
+  - kubernetes/typed/core/v1
+  - rest
