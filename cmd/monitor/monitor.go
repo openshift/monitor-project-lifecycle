@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/openshift/api/project/v1"
 	projectv1client "github.com/openshift/client-go/project/clientset/versioned/typed/project/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,10 +58,10 @@ func getRestConfig() *restclient.Config {
 	return restconfig
 }
 
-// Cleans up all objects that this monitoring command creates
+// Sets up the workspace that this monitoring command will use.
 // TODO: Add prometheus metrics for timing and errors.
 // TODO: Don't panic as that would kill the prometheus end point as well.
-func cleanupWorkspace(project string, restconfig *restclient.Config) {
+func setupWorkspace(projectName, displayName string, restconfig *restclient.Config) *v1.Project {
 	// Create an OpenShift project/v1 client.
 	projectclient, err := projectv1client.NewForConfig(restconfig)
 	if err != nil {
@@ -68,7 +69,36 @@ func cleanupWorkspace(project string, restconfig *restclient.Config) {
 	}
 
 	// Delete the project that contains the kube resources we've created
-	err = projectclient.Projects().Delete(project, &metav1.DeleteOptions{})
+	//err = projectclient.Projects().Create(project, &metav1.DeleteOptions{})
+
+	prj, err := projectclient.ProjectRequests().Create(
+		&v1.ProjectRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: projectName,
+			},
+			DisplayName: displayName,
+		},
+	)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return prj
+}
+
+// Cleans up all objects that this monitoring command creates
+// TODO: Add prometheus metrics for timing and errors.
+// TODO: Don't panic as that would kill the prometheus end point as well.
+func cleanupWorkspace(projectName string, restconfig *restclient.Config) {
+	// Create an OpenShift project/v1 client.
+	projectclient, err := projectv1client.NewForConfig(restconfig)
+	if err != nil {
+		panic(err)
+	}
+
+	// Delete the project that contains the kube resources we've created
+	err = projectclient.Projects().Delete(projectName, &metav1.DeleteOptions{})
 	if err != nil {
 		panic(err)
 	}
