@@ -3,10 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"path/filepath"
 	"time"
 
+	"github.com/ghodss/yaml"
 	"github.com/openshift/api/project/v1"
 	projectv1client "github.com/openshift/client-go/project/clientset/versioned/typed/project/v1"
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,6 +17,33 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+// Config: This is the structure for the config file we read in.
+type Config struct {
+	Namespace         string `yaml:"namespace"`
+	TemplateName      string `yaml:"templateName"`
+	TemplateNamespace string `yaml:"templateNamespace"`
+}
+
+func readConfig(filename string) (*Config, error) {
+	// Ensure the entire path is there for reading.
+	absFilename, _ := filepath.Abs(filename)
+
+	// Actually read in the file as a byte array
+	yamlFile, err := ioutil.ReadFile(absFilename)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert the yaml byte array into the config structure object.
+	var cfg Config
+	err = yaml.Unmarshal(yamlFile, &cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
 
 func main() {
 	addr := flag.String("listen-address", ":8080", "The address to listen on for HTTP requests.")
