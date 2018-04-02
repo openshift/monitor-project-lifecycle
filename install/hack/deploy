@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-oc project openshift
+oc adm policy add-role-to-user admin -z default
 oc apply -f manifests
