@@ -194,7 +194,7 @@ func listPods(coreclient *corev1client.CoreV1Client, namespace string) error {
 
 	fmt.Printf("Pods in namespace %s:\n", namespace)
 	for _, pod := range pods.Items {
-		fmt.Printf("  %s\n", pod.Name)
+		fmt.Printf("  %s\t%s\n", pod.Name, string(pod.Status.Phase))
 	}
 
 	return nil
@@ -238,7 +238,7 @@ func deployJenkins(appsclient *appsv1client.AppsV1Client, namespace string) erro
 				if rcUpdated {
 					if cond.Type == appsv1.DeploymentAvailable &&
 						cond.Status == corev1.ConditionTrue {
-						fmt.Printf("\n\nnew deployment available\n\n")
+						fmt.Printf("new deployment available\n")
 						return nil
 					} else {
 						continue
@@ -270,6 +270,38 @@ func deployJenkins(appsclient *appsv1client.AppsV1Client, namespace string) erro
 	return nil
 }
 
+func pingJenkins(coreclient *corev1client.CoreV1Client, namespace string) error {
+	svc, err := coreclient.Services(namespace).Get("jenkins",
+		metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	uri := fmt.Sprintf("http://%s:80/login", svc.Spec.ClusterIP)
+	req, err := http.NewRequest("GET", uri, nil)
+	if err != nil {
+		return err
+	}
+	req.Close = true
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("ping of jenkins service had an rc of %d", resp.StatusCode)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		return fmt.Errorf("ping of jenkins service returned an empty body")
+	}
+	return nil
+}
+
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "ok")
 }
@@ -290,7 +322,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 	instantiated := true
 	if err != nil {
 		instantiated = false
-		errStr := fmt.Sprintf("setup error %#v", err)
+		errStr := fmt.Sprintf("instantiate error %#v", err)
 		fmt.Printf("%s\n", errStr)
 		collector.failureMetric(errStr)
 		fmt.Printf("\nInitial Jenkins deployment failed $#v\n", err)
@@ -307,7 +339,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 			if restconfig == nil {
 				restconfig, err = getRestConfig()
 				if err != nil {
-					errStr := fmt.Sprintf("setup error %#v", err)
+					errStr := fmt.Sprintf("restclient error %#v", err)
 					fmt.Printf("%s\n", errStr)
 					collector.failureMetric(errStr)
 					continue
@@ -323,7 +355,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 			if templateclient == nil {
 				templateclient, err = getTemplateClient(restconfig)
 				if err != nil {
-					errStr := fmt.Sprintf("setup error %#v", err)
+					errStr := fmt.Sprintf("templateclient error %#v", err)
 					fmt.Printf("%s\n", errStr)
 					collector.failureMetric(errStr)
 					continue
@@ -333,7 +365,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 			if coreclient == nil {
 				coreclient, err = getCoreClient(restconfig)
 				if err != nil {
-					errStr := fmt.Sprintf("setup error %#v", err)
+					errStr := fmt.Sprintf("coreclient error %#v", err)
 					fmt.Printf("%s\n", errStr)
 					collector.failureMetric(errStr)
 					continue
@@ -344,7 +376,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 				err = instantiateJenkins(templateclient, coreclient, collector.namespace)
 				listPods(coreclient, collector.namespace)
 				if err != nil {
-					errStr := fmt.Sprintf("setup error %#v", err)
+					errStr := fmt.Sprintf("instantiate error %#v", err)
 					fmt.Printf("%s\n", errStr)
 					collector.failureMetric(errStr)
 					continue
@@ -354,7 +386,7 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 
 		appsclient, err := getAppsClient(restconfig)
 		if err != nil {
-			errStr := fmt.Sprintf("setup error %#v", err)
+			errStr := fmt.Sprintf("appclient error %#v", err)
 			fmt.Printf("%s\n", errStr)
 			collector.failureMetric(errStr)
 			continue
@@ -363,7 +395,21 @@ func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duratio
 		err = deployJenkins(appsclient, collector.namespace)
 		listPods(coreclient, collector.namespace)
 		if err != nil {
-			errStr := fmt.Sprintf("setup error %#v", err)
+			errStr := fmt.Sprintf("deploy error %#v", err)
+			fmt.Printf("%s\n", errStr)
+			collector.failureMetric(errStr)
+			continue
+		}
+
+		for i := 0; i < 3; i++ {
+			err = pingJenkins(coreclient, collector.namespace)
+			if err == nil {
+				break
+			}
+			time.Sleep(10 * time.Second)
+		}
+		if err != nil {
+			errStr := fmt.Sprintf("ping error %#v", err)
 			fmt.Printf("%s\n", errStr)
 			collector.failureMetric(errStr)
 			continue
