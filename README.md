@@ -1,4 +1,4 @@
-Project Lifecycle Monitoring Application
+Jenkins Lifecycle Monitoring Application
 ============================
 
 Development Setup
