@@ -15,7 +15,7 @@ type ImageStreamTagStepWatcher BasicStepWatcher
 func NewImageStreamTagStepWatcher(namespace, name string, imageclient *imagev1client.ImageV1Client) (*ImageStreamTagStepWatcher, error) {
 	retval := ImageStreamTagStepWatcher{name: name}
 	var err error
-	retval.Watcher, err = imageclient.ImageStreams(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: strings.Split(name, ":")[0]}))
+	retval.Interface, err = imageclient.ImageStreams(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: strings.Split(name, ":")[0]}))
 	if err != nil {
 		return nil, fmt.Errorf("Unable to watch service %v: %v", name, err)
 	}

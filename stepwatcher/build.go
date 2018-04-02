@@ -15,7 +15,7 @@ type BuildStepWatcher BasicStepWatcher
 func NewBuildStepWatcher(namespace, name string, buildclient *buildv1client.BuildV1Client) (*BuildStepWatcher, error) {
 	retval := BuildStepWatcher{name: name}
 	var err error
-	retval.Watcher, err = buildclient.Builds(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: name}))
+	retval.Interface, err = buildclient.Builds(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: name}))
 	if err != nil {
 		return nil, fmt.Errorf("Unable to watch build %v: %v", name, err)
 	}
