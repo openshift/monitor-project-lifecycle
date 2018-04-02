@@ -1,12 +1,12 @@
 kind: Service
 apiVersion: v1
 metadata: 
-  name: monitor-project-lifecycle
+  name: monitor-jenkins-lifecycle
   labels:
-    app: monitor-project-lifecycle
+    app: monitor-jenkins-lifecycle
 spec: 
   selector: 
-    app: monitor-project-lifecycle
+    app: monitor-jenkins-lifecycle
   ports:
   - name: web
     protocol: TCP
@@ -16,19 +16,19 @@ spec:
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: monitor-project-lifecycle
+  name: monitor-jenkins-lifecycle
 spec:
   replicas: 1
   template:
     metadata:
       labels:
-        app: monitor-project-lifecycle
+        app: monitor-jenkins-lifecycle
         version: 1.0.0
     spec:
       containers:
-      - name: monitor-project-lifecycle
+      - name: monitor-jenkins-lifecycle
         # This image setup is just for local development.
-        image: docker.io/gmontero/openshift-monitor-project-lifecycle:latest
+        image: gmontero/openshift-monitor-jenkins-lifecycle:latest
         imagePullPolicy: IfNotPresent
         ports:
         - name: web

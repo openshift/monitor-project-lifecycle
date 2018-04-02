@@ -1,4 +1,4 @@
-package: github.com/openshift/monitor-project-lifecycle
+package: github.com/gabemontero/monitor-jenkins-lifecycle
 import:
 - package: github.com/openshift/api
   subpackages:

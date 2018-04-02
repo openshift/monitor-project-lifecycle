@@ -49,14 +49,14 @@
 %global golang_version 1.8.1
 %{!?version: %global version 0.0.1}
 %{!?release: %global release 1}
-%global package_name openshift-monitor-project-lifecycle
-%global product_name OpenShift Monitor Project Lifecycle
-%global import_path github.com/openshift/monitor-project-lifecycle
+%global package_name openshift-monitor-jenkins-lifecycle
+%global product_name OpenShift Monitor Jenkins Lifecycle
+%global import_path github.com/gabemontero/monitor-jenkins-lifecycle
 
 Name:           %{package_name}
 Version:        %{version}
 Release:        %{release}%{?dist}
-Summary:        Provides standard metrics and alerting around the end-user project lifecycle.
+Summary:        Provides standard metrics and alerting around the end-user jenkins lifecycle.
 License:        ASL 2.0
 URL:            https://%{import_path}
 
@@ -73,7 +73,7 @@ ExclusiveArch:  x86_64 aarch64 ppc64le s390x
 ### AUTO-BUNDLED-GEN-ENTRY-POINT
 
 %description
-Provides standard metrics and alerting around the end-user project lifecycle.
+Provides standard metrics and alerting around the end-user jenkins lifecycle.
 
 %prep
 %if 0%{do_prep}

@@ -1,14 +1,14 @@
 #
-# The standard name for this image is openshift/openshift-monitor-project-lifecycle
+# The standard name for this image is gmontero/openshift-monitor-jenkins-lifecycle
 #
 FROM openshift/origin-base
 
-RUN INSTALL_PKGS="openshift-monitor-project-lifecycle" && \
+RUN INSTALL_PKGS="openshift-monitor-jenkins-lifecycle" && \
     yum --enablerepo=origin-local-release install -y ${INSTALL_PKGS} && \
     rpm -V ${INSTALL_PKGS} && \
     yum clean all
 
-LABEL io.k8s.display-name="OpenShift Project Lifecycle Monitor" \
+LABEL io.k8s.display-name="OpenShift Jenkins Lifecycle Monitor" \
       io.k8s.description="This is a component of OpenShift Container Platform and provides a monitoring component." \
       io.openshift.tags="openshift"
 

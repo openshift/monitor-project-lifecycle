@@ -2,7 +2,7 @@
 
 # This script provides constants for the Golang binary build process
 
-readonly OS_GO_PACKAGE=github.com/openshift/monitor-project-lifecycle
+readonly OS_GO_PACKAGE=github.com/gabemontero/monitor-jenkins-lifecycle
 
 readonly OS_BUILD_ENV_GOLANG="${OS_BUILD_ENV_GOLANG:-1.9}"
 readonly OS_BUILD_ENV_IMAGE="${OS_BUILD_ENV_IMAGE:-openshift/origin-release:golang-${OS_BUILD_ENV_GOLANG}}"
@@ -142,11 +142,11 @@ function os::util::list_go_deps() {
 
 # OS_ALL_IMAGES is the list of images built by os::build::images.
 readonly OS_ALL_IMAGES=(
-  openshift/openshift-monitor-project-lifecycle
+  gmontero/openshift-monitor-jenkins-lifecycle
 )
 
 # os::build::images builds all images in this repo.
 function os::build::images() {
-  tag_prefix="${OS_IMAGE_PREFIX:-"openshift/openshift"}"
-  os::build::image "${tag_prefix}-monitor-project-lifecycle" images/openshift-monitor-project-lifecycle
+  tag_prefix="${OS_IMAGE_PREFIX:-"gmontero/openshift"}"
+  os::build::image "${tag_prefix}-monitor-jenkins-lifecycle" images/openshift-monitor-jenkins-lifecycle
 }
