@@ -214,7 +214,8 @@ func deployJenkins(appsclient *appsv1client.AppsV1Client, namespace string) erro
 	}
 	dc, err = appsclient.DeploymentConfigs(namespace).Instantiate("jenkins",
 		&req)
-	if err != nil {
+
+  if err != nil {
 		return err
 	}
 
