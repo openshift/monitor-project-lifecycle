@@ -28,7 +28,7 @@ spec:
       containers:
       - name: monitor-project-lifecycle
         # This image setup is just for local development.
-        image: openshift/openshift-monitor-project-lifecycle
+        image: docker.io/gmontero/openshift-monitor-project-lifecycle:latest
         imagePullPolicy: IfNotPresent
         ports:
         - name: web

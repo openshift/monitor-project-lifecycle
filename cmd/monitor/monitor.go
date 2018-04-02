@@ -3,18 +3,25 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
-	"os"
 	"time"
 
-	//projectv1client "github.com/openshift/client-go/project/clientset/versioned/typed/project/v1"
 	"github.com/prometheus/client_golang/prometheus"
 
 	templatev1 "github.com/openshift/api/template/v1"
 	templatev1client "github.com/openshift/client-go/template/clientset/versioned/typed/template/v1"
 
+	appsv1 "github.com/openshift/api/apps/v1"
+	appsv1client "github.com/openshift/client-go/apps/clientset/versioned/typed/apps/v1"
+	//glide update of the dependencies for this failed with
+	/*
+		[ERROR]	Error scanning github.com/prometheus/procfs/nfs: cannot find package "." in:
+			/home/gmontero/.glide/cache/src/https-github.com-prometheus-procfs/nfs
+	*/
+	//oapps "github.com/openshift/origin/pkg/apps/apis/apps"
+
 	corev1 "k8s.io/api/core/v1"
-	//v1beta1 "k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -34,17 +41,20 @@ func (jc *jenkinsSmokeTestCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements the prometheus.Collector interface.
 func (jc *jenkinsSmokeTestCollector) Collect(ch chan<- prometheus.Metric) {
+	fmt.Printf("Prometheus metric collection has called, returning %#v\n", jc.stat)
 	ch <- jc.stat
 }
 
 func (jc *jenkinsSmokeTestCollector) successMetric() {
 	lv := []string{jc.namespace, "success", ""}
 	jc.stat = prometheus.MustNewConstMetric(jc.desc, prometheus.GaugeValue, float64(time.Now().Unix()), lv...)
+	fmt.Printf("Registering successful deployment metric %#v\n", jc.stat)
 }
 
 func (jc *jenkinsSmokeTestCollector) failureMetric(errStr string) {
 	lv := []string{jc.namespace, "failure", errStr}
 	jc.stat = prometheus.MustNewConstMetric(jc.desc, prometheus.GaugeValue, float64(time.Now().Unix()), lv...)
+	fmt.Printf("Registering failed deployment metric %#v\n", jc.stat)
 }
 
 func main() {
@@ -66,15 +76,15 @@ func main() {
 
 	go http.ListenAndServe(*addr, nil)
 
-	go runAppCreateSim(collector, 10*time.Minute)
+	go runAppCreateSim(&collector, 1*time.Minute)
 
 	select {}
 }
 
 func instantiateJenkins(templateclient *templatev1client.TemplateV1Client, coreclient *corev1client.CoreV1Client, namespace string) error {
-	// Get the "jenkins-ephemeral" Template from the "openshift" Namespace.
+	// Get the "jenkins-persistent" Template from the "openshift" Namespace.
 	template, err := templateclient.Templates("openshift").Get(
-		"jenkins-ephemeral", metav1.GetOptions{})
+		"jenkins-persistent", metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -139,8 +149,9 @@ func instantiateJenkins(templateclient *templatev1client.TemplateV1Client, corec
 				// InstantiateFailure == True, indicate failure.
 				if cond.Type ==
 					templatev1.TemplateInstanceInstantiateFailure &&
-					cond.Status == corev1.ConditionTrue {
-					return fmt.Errorf("templateinstance instantiation failed")
+					cond.Status == corev1.ConditionTrue &&
+					cond.Reason != "AlreadyExists" {
+					return fmt.Errorf("templateinstance instantiation failed reason %s message %s", cond.Reason, cond.Message)
 				}
 			}
 
@@ -160,6 +171,10 @@ func getCoreClient(restconfig *restclient.Config) (*corev1client.CoreV1Client, e
 	return corev1client.NewForConfig(restconfig)
 }
 
+func getAppsClient(restconfig *restclient.Config) (*appsv1client.AppsV1Client, error) {
+	return appsv1client.NewForConfig(restconfig)
+}
+
 func getRestConfig() (*restclient.Config, error) {
 	// Build a rest.Config from configuration injected into the Pod by
 	// Kubernetes.  Clients will use the Pod's ServiceAccount principal.
@@ -167,7 +182,8 @@ func getRestConfig() (*restclient.Config, error) {
 }
 
 func getNamespace() string {
-	return os.Getenv("NAMESPACE")
+	b, _ := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/" + corev1.ServiceAccountNamespaceKey)
+	return string(b)
 }
 
 func listPods(coreclient *corev1client.CoreV1Client, namespace string) error {
@@ -184,58 +200,91 @@ func listPods(coreclient *corev1client.CoreV1Client, namespace string) error {
 	return nil
 }
 
-func scaleJenkins(coreclient *corev1client.CoreV1Client, namespace string, up bool) error {
-	scale, err := coreclient.ReplicationControllers(namespace).GetScale("jenkins",
+func deployJenkins(appsclient *appsv1client.AppsV1Client, namespace string) error {
+	dc, err := appsclient.DeploymentConfigs(namespace).Get("jenkins",
 		metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 
-	if up {
-		scale.Spec.Replicas = 0
-	} else {
-		scale.Spec.Replicas = 1
+	req := appsv1.DeploymentRequest{
+		Name:   "jenkins",
+		Latest: true,
+		Force:  true,
+	}
+	dc, err = appsclient.DeploymentConfigs(namespace).Instantiate("jenkins",
+		&req)
+	if err != nil {
+		return err
 	}
 
-	_, err = coreclient.ReplicationControllers(namespace).UpdateScale("jenkins", scale)
-	return err
+	watcher, err := appsclient.DeploymentConfigs(namespace).Watch(
+		metav1.SingleObject(dc.ObjectMeta))
+	if err != nil {
+		return err
+	}
+
+	// look for progressing to true with rcupdated reasone, then avail true
+	// cannot look for avail true at outset, as that will exists for prior deployment
+	rcUpdated := false
+	for event := range watcher.ResultChan() {
+		switch event.Type {
+		case watch.Modified:
+			dc = event.Object.(*appsv1.DeploymentConfig)
+
+			for _, cond := range dc.Status.Conditions {
+				fmt.Printf("dc watch condition %#v\n", cond)
+
+				if rcUpdated {
+					if cond.Type == appsv1.DeploymentAvailable &&
+						cond.Status == corev1.ConditionTrue {
+						fmt.Printf("\n\nnew deployment available\n\n")
+						return nil
+					} else {
+						continue
+					}
+				}
+
+				if cond.Type == appsv1.DeploymentProgressing {
+					if cond.Status == corev1.ConditionTrue || cond.Status == corev1.ConditionUnknown {
+						// see problem with glide import comment above as to why we do not use apps type.go constant
+						if string(cond.Reason) == "ReplicationControllerUpdated" {
+							fmt.Printf("dc rc udpated phase 1 complete \n")
+							rcUpdated = true
+							continue
+						}
+
+						fmt.Printf("dc deploy has not failed so continue watching\n")
+						continue
+					}
+
+					return fmt.Errorf("dc rollout progessing failed reason %s message %s", cond.Reason, cond.Message)
+				}
+
+			}
+		default:
+			fmt.Printf("got event type %#v\n", string(event.Type))
+		}
+	}
+
+	return nil
 }
-
-// Cleans up all objects that this monitoring command creates
-/*func cleanupWorkspace(project string, restconfig *restclient.Config) error {
-	// Create an OpenShift project/v1 client.
-	projectclient, err := projectv1client.NewForConfig(restconfig)
-	if err != nil {
-		panic(err)
-	}
-
-	// Delete the project that contains the kube resources we've created
-	err = projectclient.Projects().Delete(project, &metav1.DeleteOptions{})
-	if err != nil {
-		panic(err)
-	}
-}*/
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "ok")
 }
 
-func runAppCreateSim(collector jenkinsSmokeTestCollector, interval time.Duration) {
-
+func runAppCreateSim(collector *jenkinsSmokeTestCollector, interval time.Duration) {
+	fmt.Printf("Jenkins smoke test loop start\n")
 	var templateclient *templatev1client.TemplateV1Client
 	var coreclient *corev1client.CoreV1Client
-	var namespace string
 	restconfig, err := getRestConfig()
 	if err == nil {
 		collector.namespace = getNamespace()
-		fmt.Printf("namesapce is %s\n", collector.namespace)
 		templateclient, err = getTemplateClient(restconfig)
 		if err == nil {
 			coreclient, err = getCoreClient(restconfig)
-			err = instantiateJenkins(templateclient, coreclient, namespace)
-			if err == nil {
-				listPods(coreclient, namespace)
-			}
+			err = instantiateJenkins(templateclient, coreclient, collector.namespace)
 		}
 	}
 	instantiated := true
@@ -244,9 +293,13 @@ func runAppCreateSim(collector jenkinsSmokeTestCollector, interval time.Duration
 		errStr := fmt.Sprintf("setup error %#v", err)
 		fmt.Printf("%s\n", errStr)
 		collector.failureMetric(errStr)
+		fmt.Printf("\nInitial Jenkins deployment failed $#v\n", err)
 	} else {
 		collector.successMetric()
+		fmt.Printf("\nInitial Jenkins deployment succeeded\n")
 	}
+
+	listPods(coreclient, collector.namespace)
 
 	for {
 		time.Sleep(interval)
@@ -259,8 +312,12 @@ func runAppCreateSim(collector jenkinsSmokeTestCollector, interval time.Duration
 					collector.failureMetric(errStr)
 					continue
 				}
-				collector.namespace = getNamespace()
-				fmt.Printf("namesapce is %s\n", collector.namespace)
+				if len(collector.namespace) == 0 {
+					collector.namespace = getNamespace()
+					if len(collector.namespace) == 0 {
+						continue
+					}
+				}
 			}
 
 			if templateclient == nil {
@@ -284,18 +341,18 @@ func runAppCreateSim(collector jenkinsSmokeTestCollector, interval time.Duration
 			}
 
 			if !instantiated {
-				err = instantiateJenkins(templateclient, coreclient, namespace)
+				err = instantiateJenkins(templateclient, coreclient, collector.namespace)
+				listPods(coreclient, collector.namespace)
 				if err != nil {
 					errStr := fmt.Sprintf("setup error %#v", err)
 					fmt.Printf("%s\n", errStr)
 					collector.failureMetric(errStr)
 					continue
 				}
-				listPods(coreclient, namespace)
 			}
 		}
 
-		err = scaleJenkins(coreclient, namespace, false)
+		appsclient, err := getAppsClient(restconfig)
 		if err != nil {
 			errStr := fmt.Sprintf("setup error %#v", err)
 			fmt.Printf("%s\n", errStr)
@@ -303,7 +360,8 @@ func runAppCreateSim(collector jenkinsSmokeTestCollector, interval time.Duration
 			continue
 		}
 
-		err = scaleJenkins(coreclient, namespace, true)
+		err = deployJenkins(appsclient, collector.namespace)
+		listPods(coreclient, collector.namespace)
 		if err != nil {
 			errStr := fmt.Sprintf("setup error %#v", err)
 			fmt.Printf("%s\n", errStr)
