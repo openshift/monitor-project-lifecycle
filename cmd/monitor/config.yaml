@@ -1,0 +1,13 @@
+address: 0.0.0.0
+port: 8080
+check:
+  namespace: example
+  displayName: Workspace for monitor-project-lifecycle Test
+runIntervalMins: 5  
+timeout:
+  templateCreationMins: 10
+  templateDeletionMins: 5
+template:
+  name: django-psql-persistent
+  namespace: openshift
+  parameters: # Empty, use template defaults

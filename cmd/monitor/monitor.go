@@ -1,13 +1,13 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,9 +24,22 @@ import (
 
 // Config: This is the structure for the config file we read in.
 type Config struct {
-	Namespace         string `yaml:"namespace"`
-	TemplateName      string `yaml:"templateName"`
-	TemplateNamespace string `yaml:"templateNamespace"`
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
+	Check   struct {
+		Namespace   string `yaml:"namespace"`
+		DisplayName string `yaml:"displayName"`
+	} `yaml:"check"`
+	RunIntervalMins int `yaml:"runIntervalMins"`
+	Timeout         struct {
+		TemplateCreationMins int64 `yaml:"templateCreationMins"`
+		TemplateDeletionMins int64 `yaml:"templateDeletionMins"`
+	} `yaml:"timeout"`
+	Template struct {
+		Name       string            `yaml:"name"`
+		Namespace  string            `yaml:"namespace"`
+		Parameters map[string]string `yaml:"parameters"`
+	} `yaml:"template"`
 }
 
 func readConfig(filename string) (*Config, error) {
@@ -50,8 +63,13 @@ func readConfig(filename string) (*Config, error) {
 }
 
 func main() {
-	addr := flag.String("listen-address", ":8080", "The address to listen on for HTTP requests.")
-	flag.Parse()
+	config, err := readConfig("config.yaml")
+	if err != nil {
+		fmt.Printf("Fatal error: %v\n", err)
+		os.Exit(1)
+	}
+
+	addr := config.Address + ":" + strconv.Itoa(config.Port)
 
 	// before we bring everything up, we need to make sure that we have
 	// a working configuration to connect to the API server
@@ -80,38 +98,27 @@ func main() {
 	)
 	prometheus.MustRegister(appCreateLatency)
 
-	go http.ListenAndServe(*addr, nil)
+	go http.ListenAndServe(addr, nil)
 
 	go runAppCreateSim(appCreateLatency, 1*time.Second)
 
-	// TODO: the namespace where we should do everything should be configurable
-	namespace := "example"
-	// TODO: the name of the template (and resulting app) should be configurable
-	template := "django-psql-persistent"
-	// TODO: the name of the namespace where the template lives should be configurable
-	templateNS := "openshift"
-	// TODO: the template parameters should be configurable
-	var templateParams map[string]string
-	// TODO: the places where we call time.NewTimer() need configurable values passed down to them
+	cleanupWorkspace(config, clients)
 
-	cleanupWorkspace(namespace, clients)
-
-	// TODO: setting for how often we should do the app-create loop
-	interval := 5 * time.Minute
+	interval := time.Duration(config.RunIntervalMins) * time.Minute
 	for {
 		startTime := time.Now()
-		_, err = setupWorkspace(namespace, namespace, clients)
+		_, err = setupWorkspace(config, clients)
 		if err != nil {
 			fmt.Printf("Failed to create project: %v\n", err)
 		} else {
-			if err = newApp(namespace, template, templateNS, templateParams, clients); err != nil {
+			if err = newApp(config, clients); err != nil {
 				fmt.Printf("Failed to create app: %v\n", err)
 			}
-			if err = delApp(namespace, template, clients); err != nil {
+			if err = delApp(config, clients); err != nil {
 				fmt.Printf("Failed to remove app: %v\n", err)
 			}
 		}
-		if err = cleanupWorkspace(namespace, clients); err != nil {
+		if err = cleanupWorkspace(config, clients); err != nil {
 			fmt.Printf("Failed to remove project: %v\n", err)
 		}
 		if elapsed := time.Since(startTime); elapsed < interval {
@@ -123,21 +130,21 @@ func main() {
 
 // Sets up the workspace that this monitoring command will use.
 // TODO: Add prometheus metrics for timing and errors.
-func setupWorkspace(projectName, displayName string, clients client.RESTClients) (*projectv1.Project, error) {
+func setupWorkspace(config *Config, clients client.RESTClients) (*projectv1.Project, error) {
 	// Delete the project that contains the kube resources we've created
 	//err = projectclient.Projects().Create(project, &metav1.DeleteOptions{})
 
 	prj, err := clients.ProjectClient.ProjectRequests().Create(
 		&projectv1.ProjectRequest{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: projectName,
+				Name: config.Check.Namespace,
 			},
-			DisplayName: displayName,
+			DisplayName: config.Check.DisplayName,
 		},
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create project %v: %v", projectName, err)
+		return nil, fmt.Errorf("Failed to create project %v: %v", config.Check.Namespace, err)
 	}
 
 	return prj, nil
@@ -145,30 +152,31 @@ func setupWorkspace(projectName, displayName string, clients client.RESTClients)
 
 // Cleans up all objects that this monitoring command creates
 // TODO: Add prometheus metrics for timing and errors.
-func cleanupWorkspace(projectName string, clients client.RESTClients) error {
+func cleanupWorkspace(config *Config, clients client.RESTClients) error {
 	// Delete the project that contains the kube resources we've created
-	err := clients.ProjectClient.Projects().Delete(projectName, &metav1.DeleteOptions{})
+	err := clients.ProjectClient.Projects().Delete(config.Check.Namespace, &metav1.DeleteOptions{})
 	if err != nil {
-		return fmt.Errorf("Failed to remove project %v: %v", projectName, err)
+		return fmt.Errorf("Failed to remove project %v: %v", config.Check.Namespace, err)
 	}
 	return nil
 }
 
-func newApp(namespace, templateName, templateNS string, templateParams map[string]string, clients client.RESTClients) error {
+func newApp(config *Config, clients client.RESTClients) error {
 	fmt.Printf("Step 2: %v\n", clients.TemplateClient)
-	template, err := clients.TemplateClient.Templates(templateNS).Get(templateName, metav1.GetOptions{})
+	template, err := clients.TemplateClient.Templates(config.Template.Namespace).Get(config.Template.Name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("Unable to get template %v: %v", templateName, err)
+		return fmt.Errorf("Unable to get template %v: %v", config.Template.Name, err)
 	}
 
 	fmt.Printf("Step 3\n")
 	// The template parameters for a TemplateInstance come from a secret, but
 	// we'll create an empty one since we're fine with all the defaults
-	secret, err := clients.CoreClient.Secrets(namespace).Create(&corev1.Secret{
+	secret, err := clients.CoreClient.Secrets(config.Check.Namespace).Create(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "template-parameters",
 		},
-		StringData: templateParams,
+		//StringData: templateParams,
+		StringData: config.Template.Parameters,
 	})
 	if err != nil {
 		return fmt.Errorf("Error while creating template parameter secret: %v", err)
@@ -177,10 +185,10 @@ func newApp(namespace, templateName, templateNS string, templateParams map[strin
 
 	// Create a TemplateInstance object, linking the Template and a reference to
 	// the Secret object created above.
-	ti, err := clients.TemplateClient.TemplateInstances(namespace).Create(
+	ti, err := clients.TemplateClient.TemplateInstances(config.Check.Namespace).Create(
 		&templatev1.TemplateInstance{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: templateName,
+				Name: config.Template.Name,
 			},
 			Spec: templatev1.TemplateInstanceSpec{
 				Template: *template,
@@ -190,12 +198,11 @@ func newApp(namespace, templateName, templateNS string, templateParams map[strin
 			},
 		})
 	if err != nil {
-		return fmt.Errorf("Error creating %v application from TemplateInstance: %v", templateName, err)
+		return fmt.Errorf("Error creating %v application from TemplateInstance: %v", config.Template.Name, err)
 	}
 	fmt.Printf("Step 5\n")
-	// TODO: this should be configurable, not hard-coded
-	timeout := time.NewTimer(10 * time.Minute)
-	watchers, err := stepwatcher.StepsFromTemplateInstance(ti, namespace, clients, timeout.C)
+	timeout := time.NewTimer(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
+	watchers, err := stepwatcher.StepsFromTemplateInstance(ti, config.Check.Namespace, clients, timeout.C)
 	if err != nil {
 		for _, v := range watchers {
 			v.Stop()
@@ -279,7 +286,7 @@ func newApp(namespace, templateName, templateNS string, templateParams map[strin
 	return nil
 }
 
-func delApp(namespace, templateName string, clients client.RESTClients) error {
+func delApp(config *Config, clients client.RESTClients) error {
 	fmt.Printf("Step 7\n")
 
 	// Delete everything
@@ -289,20 +296,19 @@ func delApp(namespace, templateName string, clients client.RESTClients) error {
 	// itself disappears.
 	foreground := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &foreground}
-	err := clients.TemplateClient.TemplateInstances(namespace).Delete(templateName, &deleteOptions)
+	err := clients.TemplateClient.TemplateInstances(config.Check.Namespace).Delete(config.Template.Name, &deleteOptions)
 	if err != nil {
-		return fmt.Errorf("Error deleting application %v: %v\n", templateName, err)
+		return fmt.Errorf("Error deleting application %v: %v", config.Template.Name, err)
 	}
 
-	tiStepWatcher, err := stepwatcher.NewTemplateInstanceStepWatcher(namespace, metav1.ObjectMeta{Name: templateName}, clients.TemplateClient)
+	tiStepWatcher, err := stepwatcher.NewTemplateInstanceStepWatcher(config.Check.Namespace, metav1.ObjectMeta{Name: config.Template.Name}, clients.TemplateClient)
 	if err != nil {
-		return fmt.Errorf("Unable to watch TemplateInstance %v for deletion: %v", templateName, err)
+		return fmt.Errorf("Unable to watch TemplateInstance %v for deletion: %v", config.Template.Name, err)
 	}
 
 	fmt.Printf("Step 8\n")
-	// TODO: this should be configurable, not hard-coded
 	// TODO: setting for how long we should wait for everything to be deleted
-	timeout := time.NewTimer(5 * time.Minute)
+	timeout := time.NewTimer(time.Duration(config.Timeout.TemplateDeletionMins) * time.Minute)
 WaitDeleteLoop:
 	for {
 		select {
@@ -327,7 +333,7 @@ WaitDeleteLoop:
 
 	fmt.Printf("Step 9\n")
 	// Finally delete the "template-parameters" Secret.
-	err = clients.CoreClient.Secrets(namespace).Delete("template-parameters", &metav1.DeleteOptions{})
+	err = clients.CoreClient.Secrets(config.Check.Namespace).Delete("template-parameters", &metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("Error while trying to delete secret: %v", err)
 	}
