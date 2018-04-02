@@ -83,26 +83,39 @@ func main() {
 	go http.ListenAndServe(*addr, nil)
 
 	go runAppCreateSim(appCreateLatency, 1*time.Second)
-	cleanupWorkspace("example", clients)
 
+	// TODO: the namespace where we should do everything should be configurable
+	namespace := "example"
+	// TODO: the name of the template (and resulting app) should be configurable
+	template := "django-psql-persistent"
+	// TODO: the name of the namespace where the template lives should be configurable
+	templateNS := "openshift"
+	// TODO: the template parameters should be configurable
+	var templateParams map[string]string
+	// TODO: the places where we call time.NewTimer() need configurable values passed down to them
+
+	cleanupWorkspace(namespace, clients)
+
+	// TODO: setting for how often we should do the app-create loop
 	interval := 5 * time.Minute
 	for {
 		startTime := time.Now()
-		_, err = setupWorkspace("example", "example", clients)
+		_, err = setupWorkspace(namespace, namespace, clients)
 		if err != nil {
 			fmt.Printf("Failed to create project: %v\n", err)
 		} else {
-			if err = newApp("example", "django-psql-persistent", clients); err != nil {
+			if err = newApp(namespace, template, templateNS, templateParams, clients); err != nil {
 				fmt.Printf("Failed to create app: %v\n", err)
 			}
-			if err = delApp("example", "django-psql-persistent", clients); err != nil {
+			if err = delApp(namespace, template, clients); err != nil {
 				fmt.Printf("Failed to remove app: %v\n", err)
 			}
 		}
-		if err = cleanupWorkspace("example", clients); err != nil {
+		if err = cleanupWorkspace(namespace, clients); err != nil {
 			fmt.Printf("Failed to remove project: %v\n", err)
 		}
 		if elapsed := time.Since(startTime); elapsed < interval {
+			fmt.Printf("Sleeping for %v before next iteration\n", interval-elapsed)
 			time.Sleep(interval - elapsed)
 		}
 	}
@@ -141,9 +154,9 @@ func cleanupWorkspace(projectName string, clients client.RESTClients) error {
 	return nil
 }
 
-func newApp(namespace, templateName string, clients client.RESTClients) error {
+func newApp(namespace, templateName, templateNS string, templateParams map[string]string, clients client.RESTClients) error {
 	fmt.Printf("Step 2: %v\n", clients.TemplateClient)
-	template, err := clients.TemplateClient.Templates("openshift").Get(templateName, metav1.GetOptions{})
+	template, err := clients.TemplateClient.Templates(templateNS).Get(templateName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("Unable to get template %v: %v", templateName, err)
 	}
@@ -155,6 +168,7 @@ func newApp(namespace, templateName string, clients client.RESTClients) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "template-parameters",
 		},
+		StringData: templateParams,
 	})
 	if err != nil {
 		return fmt.Errorf("Error while creating template parameter secret: %v", err)
@@ -287,6 +301,7 @@ func delApp(namespace, templateName string, clients client.RESTClients) error {
 
 	fmt.Printf("Step 8\n")
 	// TODO: this should be configurable, not hard-coded
+	// TODO: setting for how long we should wait for everything to be deleted
 	timeout := time.NewTimer(5 * time.Minute)
 WaitDeleteLoop:
 	for {

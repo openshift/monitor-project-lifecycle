@@ -14,7 +14,7 @@ type ServiceStepWatcher BasicStepWatcher
 func NewServiceStepWatcher(namespace, name string, coreclient *corev1client.CoreV1Client) (*ServiceStepWatcher, error) {
 	retval := ServiceStepWatcher{name: name}
 	var err error
-	retval.Watcher, err = coreclient.Services(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: name}))
+	retval.Interface, err = coreclient.Services(namespace).Watch(metav1.SingleObject(metav1.ObjectMeta{Name: name}))
 	if err != nil {
 		return nil, fmt.Errorf("Unable to watch service %v: %v", name, err)
 	}

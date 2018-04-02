@@ -14,11 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-type Watcher watch.Interface
-
 // StepWatcher is just like watch.Interface, except that its Event() can tell when a step is complete
 type StepWatcher interface {
-	Watcher // also known as watch.Interface
+	watch.Interface // also known as watch.Interface
 	// Event examines an event
 	// Event returns false,nil when the event doesn't indicate that the task has completed
 	// Event returns true,nil when the event indicates that the task completed
@@ -27,7 +25,7 @@ type StepWatcher interface {
 }
 
 type BasicStepWatcher struct {
-	Watcher
+	watch.Interface
 	name string
 }
 

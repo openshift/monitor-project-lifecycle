@@ -15,7 +15,7 @@ type TemplateInstanceStepWatcher BasicStepWatcher
 func NewTemplateInstanceStepWatcher(namespace string, metadata metav1.ObjectMeta, templateclient *templatev1client.TemplateV1Client) (*TemplateInstanceStepWatcher, error) {
 	retval := TemplateInstanceStepWatcher{name: metadata.Name}
 	var err error
-	retval.Watcher, err = templateclient.TemplateInstances(namespace).Watch(metav1.SingleObject(metadata))
+	retval.Interface, err = templateclient.TemplateInstances(namespace).Watch(metav1.SingleObject(metadata))
 	if err != nil {
 		return nil, fmt.Errorf("Unable to watch TemplateInstance %v: %v", metadata.Name, err)
 	}
