@@ -101,8 +101,15 @@
   branch = "master"
   name = "github.com/openshift/api"
   packages = [
+    "apps/v1",
     "build/v1",
-    "project/v1"
+    "image/docker10",
+    "image/dockerpre012",
+    "image/v1",
+    "pkg/serialization",
+    "project/v1",
+    "route/v1",
+    "template/v1"
   ]
   revision = "dca24d1902afee9d2be02425a2d7c9f910063631"
 
@@ -110,10 +117,18 @@
   branch = "release-3.9"
   name = "github.com/openshift/client-go"
   packages = [
+    "apps/clientset/versioned/scheme",
+    "apps/clientset/versioned/typed/apps/v1",
     "build/clientset/versioned/scheme",
     "build/clientset/versioned/typed/build/v1",
+    "image/clientset/versioned/scheme",
+    "image/clientset/versioned/typed/image/v1",
     "project/clientset/versioned/scheme",
-    "project/clientset/versioned/typed/project/v1"
+    "project/clientset/versioned/typed/project/v1",
+    "route/clientset/versioned/scheme",
+    "route/clientset/versioned/typed/route/v1",
+    "template/clientset/versioned/scheme",
+    "template/clientset/versioned/typed/template/v1"
   ]
   revision = "42d4abb856ce41c204a6e24342f12be5b5cd9ab8"
 
@@ -331,6 +346,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "dd7ea5cfd296aad0b3e5dae1e6dda300f491d097ef21594d832f18b0067296e2"
+  inputs-digest = "609481837ae6aba2f098847cd1fe15441e51e6ad7da67b53e6e2248e70741ae7"
   solver-name = "gps-cdcl"
   solver-version = 1
