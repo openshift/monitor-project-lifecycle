@@ -16,7 +16,7 @@ import (
 
 // StepWatcher is just like watch.Interface, except that its Event() can tell when a step is complete
 type StepWatcher interface {
-	watch.Interface // also known as watch.Interface
+	watch.Interface
 	// Event examines an event
 	// Event returns false,nil when the event doesn't indicate that the task has completed
 	// Event returns true,nil when the event indicates that the task completed
@@ -38,6 +38,47 @@ type Step struct {
 	Mutex      sync.Mutex
 }
 
+// Done records a completion event for a step, but only if no such completion event was already recorded.
+// There are 3 types of completion events:
+//    1. The step reached its expected "success" state. If the step flaps back to error and breaks things, we won't notice
+//    2. The step reached an unrecoverable error state. If the error is corrected (e.g. via manual intervention) we won't notice
+//    3. The step timed out, and it should check to see if it possibly timed out due to a prerequisite not completing
+func (s *Step) Done(timedOut bool, err error, watchers map[string]*Step) {
+	if !s.EndTime.IsZero() {
+		return
+	}
+	s.Mutex.Lock()
+	defer s.Mutex.Unlock()
+	if !s.EndTime.IsZero() { // double check now that we hold the mutex
+		return
+	}
+
+	s.EndTime = time.Now()
+	if err != nil {
+		s.Err = err
+	} else if timedOut {
+		// This step never completed. Was it because a prerequisite never completed?
+		var incompletePrereq []string
+		for _, prereqKey := range s.Prereqs {
+			if prereq, ok := watchers[prereqKey]; ok && prereq.EndTime.IsZero() || prereq.Err != nil {
+				incompletePrereq = append(incompletePrereq, prereqKey)
+			}
+		}
+		if len(incompletePrereq) > 0 {
+			s.Err = fmt.Errorf("Unable to complete due to failed prerequisite(s): %v", incompletePrereq)
+		} else {
+			s.Err = fmt.Errorf("Timed out prior to completion")
+		}
+	}
+}
+
+type CompleteStatus int
+
+const (
+	CompletedSuccess CompleteStatus = iota
+	CompletedTimeout
+)
+
 func makePrereqs(retval map[string]*Step) map[string]*Step {
 	for k, v := range retval {
 		for _, depkey := range v.Dependents {
@@ -49,7 +90,7 @@ func makePrereqs(retval map[string]*Step) map[string]*Step {
 	return retval
 }
 
-func StepsFromTemplateInstance(ti *templatev1.TemplateInstance, namespace string, clients client.RESTClients, timeoutChan <-chan time.Time) (map[string]*Step, error) {
+func StepsFromTemplateInstance(ti *templatev1.TemplateInstance, namespace string, clients client.RESTClients, timeoutChan <-chan CompleteStatus) (map[string]*Step, error) {
 	retval := map[string]*Step{}
 	deps := map[string][]string{}
 	// a map of service name to label selectors - used to create endpoints dependencies
@@ -83,8 +124,12 @@ GetTILoop:
 			case watch.Deleted:
 				return makePrereqs(retval), fmt.Errorf("TemplateInstance %v was deleted before deploy finished", ti.Name)
 			}
-		case <-timeoutChan:
-			return makePrereqs(retval), fmt.Errorf("Timed out before getting TemplateInstance update for %v", ti.Name)
+		case timedout := <-timeoutChan:
+			if timedout == CompletedTimeout {
+				return makePrereqs(retval), fmt.Errorf("Timed out before getting TemplateInstance update for %v", ti.Name)
+			} else {
+				return makePrereqs(retval), fmt.Errorf("Unexpected success cancellation before getting TemplateInstance update for %v", ti.Name)
+			}
 		}
 	}
 
