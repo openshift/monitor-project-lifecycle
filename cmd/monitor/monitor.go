@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -106,12 +107,24 @@ func main() {
 
 	interval := time.Duration(config.RunIntervalMins) * time.Minute
 	for {
+		timeoutTime := time.Now().Add(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
+		doneCh := make(chan stepwatcher.CompleteStatus, 1)
+		go func() {
+			// FIXME: should we make this URL a configuration option, derive it from the template or fetch it from the created route object?
+			// pollURL will block until success or timeout
+			if pollURL("http://django-psql-persistent-example.router.default.svc.cluster.local", timeoutTime) {
+				doneCh <- stepwatcher.CompletedSuccess
+			} else {
+				doneCh <- stepwatcher.CompletedTimeout
+			}
+		}()
+
 		startTime := time.Now()
 		_, err = setupWorkspace(config, clients)
 		if err != nil {
 			fmt.Printf("Failed to create project: %v\n", err)
 		} else {
-			if err = newApp(config, clients); err != nil {
+			if err = newApp(config, clients, doneCh); err != nil {
 				fmt.Printf("Failed to create app: %v\n", err)
 			}
 			if err = delApp(config, clients); err != nil {
@@ -121,10 +134,13 @@ func main() {
 		if err = cleanupWorkspace(config, clients); err != nil {
 			fmt.Printf("Failed to remove project: %v\n", err)
 		}
-		if elapsed := time.Since(startTime); elapsed < interval {
-			fmt.Printf("Sleeping for %v before next iteration\n", interval-elapsed)
-			time.Sleep(interval - elapsed)
+		// sleep a minimum of 30 seconds between runs
+		toSleep := 30 * time.Second
+		if elapsed := time.Since(startTime); interval-elapsed > toSleep {
+			toSleep = interval - elapsed
 		}
+		fmt.Printf("Sleeping for %v before next iteration\n", toSleep)
+		time.Sleep(toSleep)
 	}
 }
 
@@ -161,7 +177,31 @@ func cleanupWorkspace(config *Config, clients client.RESTClients) error {
 	return nil
 }
 
-func newApp(config *Config, clients client.RESTClients) error {
+// pollURL will continually make HTTP GET requests of url until it returns status code 200 or times out
+// pollURL returns true if the request (eventually) succeeded with status code 200, and false if it timed out
+func pollURL(url string, timeoutTime time.Time) bool {
+	for timeout := timeoutTime.Sub(time.Now()); timeout > 0; timeout = timeoutTime.Sub(time.Now()) {
+		client := http.Client{Timeout: timeout}
+		resp, err := client.Get(url)
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return false
+		}
+		if err == nil && resp.StatusCode == 200 {
+			fmt.Printf("Route check got %v. Success!\n", resp.StatusCode)
+			return true
+		}
+		fmt.Printf("Route check got %v and %v. Still waiting %v before timeout\n", resp.StatusCode, err, timeoutTime.Sub(time.Now()))
+		time.Sleep(time.Second)
+	}
+	return false
+}
+
+// newApp will create an application based upon the template configuration in config.
+// newApp will monitor created objects until it receives any value from doneCh
+// newApp will return a non-nil error when an unrecoverable error prevents it
+//        from proceeding (and it will not read from doneCh in such cases) and nil
+//        when it has read from doneCh
+func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatcher.CompleteStatus) error {
 	fmt.Printf("Step 2: %v\n", clients.TemplateClient)
 	template, err := clients.TemplateClient.Templates(config.Template.Namespace).Get(config.Template.Name, metav1.GetOptions{})
 	if err != nil {
@@ -201,8 +241,7 @@ func newApp(config *Config, clients client.RESTClients) error {
 		return fmt.Errorf("Error creating %v application from TemplateInstance: %v", config.Template.Name, err)
 	}
 	fmt.Printf("Step 5\n")
-	timeout := time.NewTimer(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
-	watchers, err := stepwatcher.StepsFromTemplateInstance(ti, config.Check.Namespace, clients, timeout.C)
+	watchers, err := stepwatcher.StepsFromTemplateInstance(ti, config.Check.Namespace, clients, doneCh)
 	if err != nil {
 		for _, v := range watchers {
 			v.Stop()
@@ -211,6 +250,7 @@ func newApp(config *Config, clients client.RESTClients) error {
 	}
 
 	wg := sync.WaitGroup{}
+
 	for k, v := range watchers {
 		fmt.Printf("Adding watcher %v\n", k)
 		wg.Add(1)
@@ -219,70 +259,32 @@ func newApp(config *Config, clients client.RESTClients) error {
 			for {
 				event, ok := <-step.ResultChan()
 				if !ok {
-					// cancelled by a prereq or timeout
+					// cancelled by completion or timeout
 					return
 				}
-				ok, err := step.Event(event)
+				ok, err = step.Event(event)
 				if err != nil {
 					fmt.Printf("StepWatcher returned error %v\n", err)
-					seen := map[string]bool{}
-					now := time.Now()
-					var cancel func([]string)
-					cancel = func(keys []string) {
-						for _, depkey := range keys {
-							if seen[depkey] { // prevent infinite recursion in the case of cycles
-								continue
-							}
-							seen[depkey] = true
-							if dep, ok := watchers[depkey]; ok && dep.EndTime.IsZero() {
-								dep.Mutex.Lock()
-								if dep.EndTime.IsZero() { // double check now that we hold the mutex
-									dep.EndTime = now
-									dep.Err = fmt.Errorf("Unable to complete due to failed prerequisite: %v", name)
-								}
-								dep.Mutex.Unlock()
-								dep.Stop()
-							}
-						}
-					}
-					cancel(step.Dependents)
-					break
+					v.Done(false, err, watchers)
 				} else if ok {
 					fmt.Printf("StepWatcher says we're done %v\n", name)
-					break
+					v.Done(false, nil, watchers)
 				} else {
 					fmt.Printf("StepWatcher says we're not done %v\n", name)
 				}
 			}
-			step.Mutex.Lock()
-			step.EndTime = time.Now()
-			step.Err = err
-			step.Mutex.Unlock()
 		}(k, v)
 	}
-	donech := make(chan bool)
-	go func() {
-		wg.Wait()
-		donech <- true
-	}()
-	fmt.Printf("Step 6\n")
 
-	select {
-	case <-timeout.C:
-		for k, v := range watchers {
-			now := time.Now()
-			if v.EndTime.IsZero() {
-				v.Mutex.Lock()
-				if v.EndTime.IsZero() { // double check now that we hold the mutex
-					v.EndTime = now
-					v.Err = fmt.Errorf("Timed out before application deployment succeeded: %v", k)
-				}
-				v.Mutex.Unlock()
-				v.Stop()
-			}
-		}
-	case <-donech:
+	fmt.Printf("Step 6\n")
+	// wait for app's route to become available or timeout
+	completed := <-doneCh
+	// stop all of the watchers, figure out which (if any) may have prevented a successful deployment
+	for _, watcher := range watchers {
+		watcher.Done(completed == stepwatcher.CompletedTimeout, nil, watchers)
+		watcher.Stop()
 	}
+	wg.Wait()
 	return nil
 }
 
