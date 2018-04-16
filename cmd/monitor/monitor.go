@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ghodss/yaml"
+	glog "github.com/golang/glog"
 	projectv1 "github.com/openshift/api/project/v1"
 	templatev1 "github.com/openshift/api/template/v1"
 	"github.com/openshift/monitor-project-lifecycle/client"
@@ -23,13 +25,14 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// Config: This is the structure for the config file we read in.
+// Config This is the structure for the config file we read in.
 type Config struct {
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
 	Check   struct {
 		Namespace   string `yaml:"namespace"`
 		DisplayName string `yaml:"displayName"`
+		URL         string `yaml:"url"`
 	} `yaml:"check"`
 	RunIntervalMins int `yaml:"runIntervalMins"`
 	Timeout         struct {
@@ -63,11 +66,29 @@ func readConfig(filename string) (*Config, error) {
 	return &cfg, nil
 }
 
+// Prints the options of the program (--help)
+func usage() {
+	flag.PrintDefaults()
+	os.Exit(2)
+}
+
+// Sets up glog by setting usage and parsing flags.
+func setupGlog() {
+	flag.Usage = usage
+	flag.Parse()
+}
+
 func main() {
+	// glog has to be setup before it can be used.
+	setupGlog()
+
+	// Make sure glog.Flush is always called at the end of the program.
+	// This is required to ensure no logs are lost on exit due to buffering.
+	defer glog.Flush()
+
 	config, err := readConfig("config.yaml")
 	if err != nil {
-		fmt.Printf("Fatal error: %v\n", err)
-		os.Exit(1)
+		glog.Fatalf("Fatal error: %v\n", err)
 	}
 
 	addr := config.Address + ":" + strconv.Itoa(config.Port)
@@ -76,14 +97,12 @@ func main() {
 	// a working configuration to connect to the API server
 	restconfig, err := client.GetRestConfig()
 	if err != nil {
-		fmt.Printf("Fatal error: %v\n", err)
-		os.Exit(1)
+		glog.Fatalf("Fatal error: %v\n", err)
 	}
 
 	clients, err := client.MakeRESTClients(restconfig)
 	if err != nil {
-		fmt.Printf("Fatal error: %v\n", err)
-		os.Exit(1)
+		glog.Fatalf("Fatal error: %v\n", err)
 	}
 
 	http.HandleFunc("/healthz", handleHealthz)
@@ -110,9 +129,11 @@ func main() {
 		timeoutTime := time.Now().Add(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
 		doneCh := make(chan stepwatcher.CompleteStatus, 1)
 		go func() {
-			// FIXME: should we make this URL a configuration option, derive it from the template or fetch it from the created route object?
+			// TODO: Decide if we should keep this URL a configuration option, derive it from the template or fetch it from the created route object?
+			// TODO: Decide if config.Check.URL should be a list and if so, how to handle checking multiple URLs at the same time (multiple go routines,
+			//       hand multiple URLs to pollURL, etc).
 			// pollURL will block until success or timeout
-			if pollURL("http://django-psql-persistent-example.router.default.svc.cluster.local", timeoutTime) {
+			if pollURL(config.Check.URL, timeoutTime) {
 				doneCh <- stepwatcher.CompletedSuccess
 			} else {
 				doneCh <- stepwatcher.CompletedTimeout
@@ -122,24 +143,24 @@ func main() {
 		startTime := time.Now()
 		_, err = setupWorkspace(config, clients)
 		if err != nil {
-			fmt.Printf("Failed to create project: %v\n", err)
+			glog.Errorf("Failed to create project: %v\n", err)
 		} else {
 			if err = newApp(config, clients, doneCh); err != nil {
-				fmt.Printf("Failed to create app: %v\n", err)
+				glog.Errorf("Failed to create app: %v\n", err)
 			}
 			if err = delApp(config, clients); err != nil {
-				fmt.Printf("Failed to remove app: %v\n", err)
+				glog.Errorf("Failed to remove app: %v\n", err)
 			}
 		}
 		if err = cleanupWorkspace(config, clients); err != nil {
-			fmt.Printf("Failed to remove project: %v\n", err)
+			glog.Errorf("Failed to remove project: %v\n", err)
 		}
 		// sleep a minimum of 30 seconds between runs
 		toSleep := 30 * time.Second
 		if elapsed := time.Since(startTime); interval-elapsed > toSleep {
 			toSleep = interval - elapsed
 		}
-		fmt.Printf("Sleeping for %v before next iteration\n", toSleep)
+		glog.Infof("Sleeping for %v before next iteration\n", toSleep)
 		time.Sleep(toSleep)
 	}
 }
@@ -187,10 +208,16 @@ func pollURL(url string, timeoutTime time.Time) bool {
 			return false
 		}
 		if err == nil && resp.StatusCode == 200 {
-			fmt.Printf("Route check got %v. Success!\n", resp.StatusCode)
+			glog.Infof("Route check [%v] got %v. Success!\n", url, resp.StatusCode)
 			return true
 		}
-		fmt.Printf("Route check got %v and %v. Still waiting %v before timeout\n", resp.StatusCode, err, timeoutTime.Sub(time.Now()))
+
+		if resp == nil {
+			glog.Infof("Route check [%v] got %v. Still waiting %v before timeout\n", url, err, timeoutTime.Sub(time.Now()))
+		} else {
+			glog.Infof("Route check [%v] got %v and %v. Still waiting %v before timeout\n", url, resp.StatusCode, err, timeoutTime.Sub(time.Now()))
+		}
+
 		time.Sleep(time.Second)
 	}
 	return false
@@ -202,13 +229,13 @@ func pollURL(url string, timeoutTime time.Time) bool {
 //        from proceeding (and it will not read from doneCh in such cases) and nil
 //        when it has read from doneCh
 func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatcher.CompleteStatus) error {
-	fmt.Printf("Step 2: %v\n", clients.TemplateClient)
+	glog.Infof("Step 2: %v\n", clients.TemplateClient)
 	template, err := clients.TemplateClient.Templates(config.Template.Namespace).Get(config.Template.Name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("Unable to get template %v: %v", config.Template.Name, err)
 	}
 
-	fmt.Printf("Step 3\n")
+	glog.Infof("Step 3\n")
 	// The template parameters for a TemplateInstance come from a secret, but
 	// we'll create an empty one since we're fine with all the defaults
 	secret, err := clients.CoreClient.Secrets(config.Check.Namespace).Create(&corev1.Secret{
@@ -221,7 +248,7 @@ func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatche
 	if err != nil {
 		return fmt.Errorf("Error while creating template parameter secret: %v", err)
 	}
-	fmt.Printf("Step 4\n")
+	glog.Infof("Step 4\n")
 
 	// Create a TemplateInstance object, linking the Template and a reference to
 	// the Secret object created above.
@@ -240,19 +267,19 @@ func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatche
 	if err != nil {
 		return fmt.Errorf("Error creating %v application from TemplateInstance: %v", config.Template.Name, err)
 	}
-	fmt.Printf("Step 5\n")
+	glog.Infof("Step 5\n")
 	watchers, err := stepwatcher.StepsFromTemplateInstance(ti, config.Check.Namespace, clients, doneCh)
 	if err != nil {
 		for _, v := range watchers {
 			v.Stop()
 		}
-		fmt.Printf("Failed to create watches: %v\n", err)
+		glog.Errorf("Failed to create watches: %v\n", err)
 	}
 
 	wg := sync.WaitGroup{}
 
 	for k, v := range watchers {
-		fmt.Printf("Adding watcher %v\n", k)
+		glog.Infof("Adding watcher %v\n", k)
 		wg.Add(1)
 		go func(name string, step *stepwatcher.Step) {
 			defer wg.Done()
@@ -264,19 +291,19 @@ func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatche
 				}
 				ok, err = step.Event(event)
 				if err != nil {
-					fmt.Printf("StepWatcher returned error %v\n", err)
-					v.Done(false, err, watchers)
+					glog.Errorf("StepWatcher returned error %v\n", err)
+					step.Done(false, err, watchers)
 				} else if ok {
-					fmt.Printf("StepWatcher says we're done %v\n", name)
-					v.Done(false, nil, watchers)
+					glog.Infof("StepWatcher says we're done %v\n", name)
+					step.Done(false, nil, watchers)
 				} else {
-					fmt.Printf("StepWatcher says we're not done %v\n", name)
+					glog.Infof("StepWatcher says we're not done %v\n", name)
 				}
 			}
 		}(k, v)
 	}
 
-	fmt.Printf("Step 6\n")
+	glog.Infof("Step 6\n")
 	// wait for app's route to become available or timeout
 	completed := <-doneCh
 	// stop all of the watchers, figure out which (if any) may have prevented a successful deployment
@@ -289,7 +316,7 @@ func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatche
 }
 
 func delApp(config *Config, clients client.RESTClients) error {
-	fmt.Printf("Step 7\n")
+	glog.Infof("Step 7\n")
 
 	// Delete everything
 
@@ -308,7 +335,7 @@ func delApp(config *Config, clients client.RESTClients) error {
 		return fmt.Errorf("Unable to watch TemplateInstance %v for deletion: %v", config.Template.Name, err)
 	}
 
-	fmt.Printf("Step 8\n")
+	glog.Infof("Step 8\n")
 	// TODO: setting for how long we should wait for everything to be deleted
 	timeout := time.NewTimer(time.Duration(config.Timeout.TemplateDeletionMins) * time.Minute)
 WaitDeleteLoop:
@@ -328,18 +355,18 @@ WaitDeleteLoop:
 			case watch.Deleted:
 				tiStepWatcher.Stop()
 			default:
-				fmt.Printf("unexpected event type: %v\n", event.Type)
+				glog.Errorf("unexpected event type: %v\n", event.Type)
 			}
 		}
 	}
 
-	fmt.Printf("Step 9\n")
+	glog.Infof("Step 9\n")
 	// Finally delete the "template-parameters" Secret.
 	err = clients.CoreClient.Secrets(config.Check.Namespace).Delete("template-parameters", &metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("Error while trying to delete secret: %v", err)
 	}
-	fmt.Printf("Step 10\n")
+	glog.Infof("Step 10\n")
 	return nil
 }
 

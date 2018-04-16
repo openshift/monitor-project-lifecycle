@@ -3,6 +3,7 @@ port: 8080
 check:
   namespace: example
   displayName: Workspace for monitor-project-lifecycle Test
+  url: http://django-psql-persistent-example.router.default.svc.cluster.local
 runIntervalMins: 5  
 timeout:
   templateCreationMins: 10
