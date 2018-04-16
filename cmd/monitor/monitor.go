@@ -1,13 +1,27 @@
+/*
+Copyright (c) 2018 Red Hat, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -20,6 +34,7 @@ import (
 	"github.com/openshift/monitor-project-lifecycle/client"
 	"github.com/openshift/monitor-project-lifecycle/stepwatcher"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -46,47 +61,34 @@ type Config struct {
 	} `yaml:"template"`
 }
 
-func readConfig(filename string) (*Config, error) {
-	// Ensure the entire path is there for reading.
-	absFilename, _ := filepath.Abs(filename)
+// RunOptions represent command line flags.
+type RunOptions struct {
+	ConfigFile string
+}
 
-	// Actually read in the file as a byte array
-	yamlFile, err := ioutil.ReadFile(absFilename)
-	if err != nil {
-		return nil, err
+func NewRunCommand() *cobra.Command {
+	options := &RunOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Starts the monitor app.",
+		Long:  "Starts the monitor app.",
+		Run: func(c *cobra.Command, args []string) {
+			run(options)
+		},
 	}
 
-	// Convert the yaml byte array into the config structure object.
-	var cfg Config
-	err = yaml.Unmarshal(yamlFile, &cfg)
-	if err != nil {
-		return nil, err
-	}
+	flags := cmd.Flags()
+	// This command only supports reading from config
+	flags.StringVar(&options.ConfigFile, "config", "", "Location of the configuration file to run from.")
+	cmd.MarkFlagFilename("config", "yaml", "yml")
+	cmd.MarkFlagRequired("config")
 
-	return &cfg, nil
+	return cmd
 }
 
-// Prints the options of the program (--help)
-func usage() {
-	flag.PrintDefaults()
-	os.Exit(2)
-}
-
-// Sets up glog by setting usage and parsing flags.
-func setupGlog() {
-	flag.Usage = usage
-	flag.Parse()
-}
-
-func main() {
-	// glog has to be setup before it can be used.
-	setupGlog()
-
-	// Make sure glog.Flush is always called at the end of the program.
-	// This is required to ensure no logs are lost on exit due to buffering.
-	defer glog.Flush()
-
-	config, err := readConfig("config.yaml")
+func run(options *RunOptions) {
+	config, err := readConfig(options.ConfigFile)
 	if err != nil {
 		glog.Fatalf("Fatal error: %v\n", err)
 	}
@@ -392,4 +394,24 @@ func runAppCreateSim(metric *prometheus.HistogramVec, interval time.Duration) {
 		}
 		time.Sleep(interval)
 	}
+}
+
+func readConfig(filename string) (*Config, error) {
+	// Ensure the entire path is there for reading.
+	absFilename, _ := filepath.Abs(filename)
+
+	// Actually read in the file as a byte array
+	yamlFile, err := ioutil.ReadFile(absFilename)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert the yaml byte array into the config structure object.
+	var cfg Config
+	err = yaml.Unmarshal(yamlFile, &cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
 }
