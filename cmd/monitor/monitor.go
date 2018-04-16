@@ -190,7 +190,13 @@ func pollURL(url string, timeoutTime time.Time) bool {
 			fmt.Printf("Route check got %v. Success!\n", resp.StatusCode)
 			return true
 		}
-		fmt.Printf("Route check got %v and %v. Still waiting %v before timeout\n", resp.StatusCode, err, timeoutTime.Sub(time.Now()))
+
+		if resp == nil {
+			fmt.Printf("Route check got %v. Still waiting %v before timeout\n", err, timeoutTime.Sub(time.Now()))
+		} else {
+			fmt.Printf("Route check got %v and %v. Still waiting %v before timeout\n", resp.StatusCode, err, timeoutTime.Sub(time.Now()))
+		}
+
 		time.Sleep(time.Second)
 	}
 	return false
