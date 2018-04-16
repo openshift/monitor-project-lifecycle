@@ -32,6 +32,7 @@ type Config struct {
 	Check   struct {
 		Namespace   string `yaml:"namespace"`
 		DisplayName string `yaml:"displayName"`
+		URL         string `yaml:"url"`
 	} `yaml:"check"`
 	RunIntervalMins int `yaml:"runIntervalMins"`
 	Timeout         struct {
@@ -128,9 +129,11 @@ func main() {
 		timeoutTime := time.Now().Add(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
 		doneCh := make(chan stepwatcher.CompleteStatus, 1)
 		go func() {
-			// FIXME: should we make this URL a configuration option, derive it from the template or fetch it from the created route object?
+			// TODO: Decide if we should keep this URL a configuration option, derive it from the template or fetch it from the created route object?
+			// TODO: Decide if config.Check.URL should be a list and if so, how to handle checking multiple URLs at the same time (multiple go routines,
+			//       hand multiple URLs to pollURL, etc).
 			// pollURL will block until success or timeout
-			if pollURL("http://django-psql-persistent-example.router.default.svc.cluster.local", timeoutTime) {
+			if pollURL(config.Check.URL, timeoutTime) {
 				doneCh <- stepwatcher.CompletedSuccess
 			} else {
 				doneCh <- stepwatcher.CompletedTimeout
