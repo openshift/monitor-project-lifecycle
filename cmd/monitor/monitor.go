@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// Config: This is the structure for the config file we read in.
+// Config This is the structure for the config file we read in.
 type Config struct {
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
@@ -265,10 +265,10 @@ func newApp(config *Config, clients client.RESTClients, doneCh <-chan stepwatche
 				ok, err = step.Event(event)
 				if err != nil {
 					fmt.Printf("StepWatcher returned error %v\n", err)
-					v.Done(false, err, watchers)
+					step.Done(false, err, watchers)
 				} else if ok {
 					fmt.Printf("StepWatcher says we're done %v\n", name)
-					v.Done(false, nil, watchers)
+					step.Done(false, nil, watchers)
 				} else {
 					fmt.Printf("StepWatcher says we're not done %v\n", name)
 				}
