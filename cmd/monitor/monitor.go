@@ -17,13 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -42,23 +42,22 @@ import (
 
 // Config This is the structure for the config file we read in.
 type Config struct {
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
-	Check   struct {
-		Namespace   string `yaml:"namespace"`
-		DisplayName string `yaml:"displayName"`
-		URL         string `yaml:"url"`
-	} `yaml:"check"`
-	RunIntervalMins int `yaml:"runIntervalMins"`
-	Timeout         struct {
-		TemplateCreationMins int64 `yaml:"templateCreationMins"`
-		TemplateDeletionMins int64 `yaml:"templateDeletionMins"`
-	} `yaml:"timeout"`
+	ListenAddress string `json:"listenAddress"`
+	Check         struct {
+		Namespace   string `json:"namespace"`
+		DisplayName string `json:"displayName"`
+		URL         string `json:"url"`
+	} `json:"check"`
+	RunInterval Duration `json:"runInterval"`
+	Timeout     struct {
+		TemplateCreation Duration `json:"templateCreation"`
+		TemplateDeletion Duration `json:"templateDeletion"`
+	} `json:"timeout"`
 	Template struct {
-		Name       string            `yaml:"name"`
-		Namespace  string            `yaml:"namespace"`
-		Parameters map[string]string `yaml:"parameters"`
-	} `yaml:"template"`
+		Name       string            `json:"name"`
+		Namespace  string            `json:"namespace"`
+		Parameters map[string]string `json:"parameters"`
+	} `json:"template"`
 }
 
 // RunOptions represent command line flags.
@@ -93,7 +92,8 @@ func run(options *RunOptions) {
 		glog.Fatalf("Fatal error: %v\n", err)
 	}
 
-	addr := config.Address + ":" + strconv.Itoa(config.Port)
+	configStr, _ := json.Marshal(config)
+	glog.Infof("starting monitor app with config: %s", configStr)
 
 	// before we bring everything up, we need to make sure that we have
 	// a working configuration to connect to the API server
@@ -120,15 +120,15 @@ func run(options *RunOptions) {
 	)
 	prometheus.MustRegister(appCreateLatency)
 
-	go http.ListenAndServe(addr, nil)
+	go http.ListenAndServe(config.ListenAddress, nil)
 
 	go runAppCreateSim(appCreateLatency, 1*time.Second)
 
 	cleanupWorkspace(config, clients)
 
-	interval := time.Duration(config.RunIntervalMins) * time.Minute
+	interval := config.RunInterval.Duration
 	for {
-		timeoutTime := time.Now().Add(time.Duration(config.Timeout.TemplateCreationMins) * time.Minute)
+		timeoutTime := time.Now().Add(config.Timeout.TemplateCreation.Duration)
 		doneCh := make(chan stepwatcher.CompleteStatus, 1)
 		go func() {
 			// TODO: Decide if we should keep this URL a configuration option, derive it from the template or fetch it from the created route object?
@@ -339,7 +339,7 @@ func delApp(config *Config, clients client.RESTClients) error {
 
 	glog.Infof("Step 8\n")
 	// TODO: setting for how long we should wait for everything to be deleted
-	timeout := time.NewTimer(time.Duration(config.Timeout.TemplateDeletionMins) * time.Minute)
+	timeout := time.NewTimer(config.Timeout.TemplateDeletion.Duration)
 WaitDeleteLoop:
 	for {
 		select {
@@ -414,4 +414,28 @@ func readConfig(filename string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+
+	tmp, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+
+	d.Duration = tmp
+
+	return nil
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + d.String() + `"`), nil
 }
