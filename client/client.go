@@ -24,8 +24,8 @@ type RESTClients struct {
 	ProjectClient  *projectv1client.ProjectV1Client
 }
 
-func MakeRESTClients(restconfig *restclient.Config) (RESTClients, error) {
-	retval := RESTClients{}
+func MakeRESTClients(restconfig *restclient.Config) (*RESTClients, error) {
+	retval := &RESTClients{}
 	var err error
 
 	retval.AppsClient, err = appsv1client.NewForConfig(restconfig)
