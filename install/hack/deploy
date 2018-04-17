@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-
-oc project openshift
-oc apply -f manifests
