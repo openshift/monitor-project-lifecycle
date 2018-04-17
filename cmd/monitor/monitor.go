@@ -37,24 +37,26 @@ import (
 )
 
 var (
+	prefix = "monitor_app_create_"
+
 	lastTestDuration = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "test_duration_seconds",
+		Name: prefix + "test_duration_seconds",
 		Help: "Duration of the last completed test (seconds)",
 	})
 
 	testsRun = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "test_run_total",
+		Name: prefix + "test_run_total",
 		Help: "Number of tests run.",
 	})
 
 	testsCompleted = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "test_completed_total",
+		Name: prefix + "test_completed_total",
 		Help: "Number of tests completed.",
 	})
 
 	testsFailed = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "test_failed_total",
+			Name: prefix + "test_failed_total",
 			Help: "Number of tests failed.",
 		},
 		[]string{"stage"},
