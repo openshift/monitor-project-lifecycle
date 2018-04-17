@@ -36,6 +36,31 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
+var (
+	lastTestDuration = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "test_duration_seconds",
+		Help: "Duration of the last completed test (seconds)",
+	})
+
+	testsRun = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "test_run_total",
+		Help: "Number of tests run.",
+	})
+
+	testsCompleted = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "test_completed_total",
+		Help: "Number of tests completed.",
+	})
+
+	testsFailed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "test_failed_total",
+			Help: "Number of tests failed.",
+		},
+		[]string{"stage"},
+	)
+)
+
 // AppCreateAvailabilityMonitor continuously measures availability of the app
 // creation workflow using a predefined template.
 type AppCreateAvailabilityMonitor struct {
@@ -51,15 +76,10 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 	})
 	http.Handle("/metrics", prometheus.Handler())
 
-	appCreateLatency := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "app_create_latency_seconds",
-			Help:    "The latency of various app creation steps.",
-			Buckets: []float64{1, 10, 60, 3 * 60, 5 * 60},
-		},
-		[]string{"step"},
-	)
-	prometheus.MustRegister(appCreateLatency)
+	prometheus.MustRegister(lastTestDuration)
+	prometheus.MustRegister(testsRun)
+	prometheus.MustRegister(testsCompleted)
+	prometheus.MustRegister(testsFailed)
 
 	go http.ListenAndServe(m.Config.ListenAddress, nil)
 	glog.V(1).Infof("http server listening on %v", m.Config.ListenAddress)
@@ -73,7 +93,10 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 			}
 			glog.V(2).Infof("cleaned up workspace")
 		}()
+
 		glog.V(2).Infof("starting a test")
+
+		// Set up the project.
 		err := m.setupWorkspace()
 		if err != nil {
 			glog.Errorf("error setting up workspace: %v", err)
@@ -81,11 +104,24 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 			return
 		}
 		glog.V(2).Infof("created workspace")
+
+		// Run the test.
+		start := time.Now()
 		err = m.runTest()
+
+		// Measure the results.
+		duration := time.Since(start)
+		testsRun.Inc()
+		glog.V(2).Infof("finished test")
+
 		if err != nil {
 			glog.Errorf("error running test: %v", err)
+			testsFailed.With(prometheus.Labels{"stage": "test"}).Inc()
+		} else {
+			testsCompleted.Inc()
+			// TODO: switch to prometheus.Timer in client_golang v0.9
+			lastTestDuration.Set(float64(int64(duration) / int64(time.Second)))
 		}
-		glog.V(2).Infof("finished test")
 	}, m.Config.RunInterval.Duration, m.Stop)
 
 	return nil
