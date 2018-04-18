@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -89,27 +90,27 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 	// Start testing.
 	// TODO: timing/metrics
 	wait.Until(func() {
-		defer func() {
-			if err := m.cleanupWorkspace(); err != nil {
-				glog.Errorf("error cleaning up workspace: %v", err)
-			}
-			glog.V(2).Infof("cleaned up workspace")
-		}()
-
 		glog.V(2).Infof("starting a test")
 
 		// Set up the project.
-		err := m.setupWorkspace()
+		namespace, err := m.createProject()
 		if err != nil {
-			glog.Errorf("error setting up workspace: %v", err)
+			glog.Errorf("error creating project: %v", err)
 			// try again next interval
 			return
 		}
-		glog.V(2).Infof("created workspace")
+		glog.V(2).Infof("created project %q", namespace)
+
+		defer func() {
+			if err := m.deleteProject(namespace); err != nil {
+				glog.Errorf("error cleaning up project %q: %v", namespace, err)
+			}
+			glog.V(2).Infof("cleaned up")
+		}()
 
 		// Run the test.
 		start := time.Now()
-		err = m.runTest()
+		err = m.runTest(namespace)
 
 		// Measure the results.
 		duration := time.Since(start)
@@ -135,7 +136,7 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 //   2. Wait for the route to return HTTP 200.
 //
 // TODO: track metrics.
-func (m *AppCreateAvailabilityMonitor) runTest() error {
+func (m *AppCreateAvailabilityMonitor) runTest(namespace string) error {
 	template, err := m.Client.TemplateClient.Templates(m.Config.Template.Namespace).Get(m.Config.Template.Name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("error getting template %q: %v", m.Config.Template.Name, err)
@@ -143,7 +144,7 @@ func (m *AppCreateAvailabilityMonitor) runTest() error {
 
 	// The template parameters for a TemplateInstance come from a secret, but
 	// we'll create an empty one since we're fine with all the defaults
-	secret, err := m.Client.CoreClient.Secrets(m.Config.Check.Namespace).Create(&corev1.Secret{
+	secret, err := m.Client.CoreClient.Secrets(namespace).Create(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "template-parameters",
 		},
@@ -156,7 +157,7 @@ func (m *AppCreateAvailabilityMonitor) runTest() error {
 
 	// Create a TemplateInstance object, linking the Template and a reference to
 	// the Secret object created above.
-	_, err = m.Client.TemplateClient.TemplateInstances(m.Config.Check.Namespace).Create(
+	_, err = m.Client.TemplateClient.TemplateInstances(namespace).Create(
 		&templatev1.TemplateInstance{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: m.Config.Template.Name,
@@ -173,31 +174,32 @@ func (m *AppCreateAvailabilityMonitor) runTest() error {
 	}
 
 	// Wait for the route to exist.
-	glog.V(2).Infof("waiting for route %q to exist", m.Config.Check.Route)
+	routeName := m.Config.Template.AvailabilityRoute
+	glog.V(2).Infof("waiting for route %q to exist", routeName)
 	var route *routev1.Route
-	err = wait.Poll(50*time.Millisecond, m.Config.Timeout.TemplateCreation.Duration, wait.ConditionFunc(func() (done bool, err error) {
-		r, err := m.Client.RouteClient.Routes(m.Config.Check.Namespace).Get(m.Config.Check.Route, metav1.GetOptions{})
+	err = wait.Poll(50*time.Millisecond, m.Config.AvailabilityTimeout.Duration, wait.ConditionFunc(func() (done bool, err error) {
+		r, err := m.Client.RouteClient.Routes(namespace).Get(routeName, metav1.GetOptions{})
 		if err != nil {
 			if kerrors.IsNotFound(err) {
 				return false, nil
 			}
-			return true, fmt.Errorf("error getting route %q: %v", m.Config.Check.Route, err)
+			return true, fmt.Errorf("error getting route %q: %v", routeName, err)
 		}
 		route = r
 		return true, nil
 	}))
 	if err != nil {
-		return fmt.Errorf("timed out waiting for route %q to exist", m.Config.Check.Route)
+		return fmt.Errorf("timed out waiting for route %q to be created", routeName)
 	}
 
 	// Wait for the route to become responsive.
-	glog.V(2).Infof("waiting for good response from %q", m.Config.Check.Route)
-	err = wait.Poll(1*time.Second, m.Config.Timeout.TemplateCreation.Duration, wait.ConditionFunc(func() (done bool, err error) {
+	url := &url.URL{
+		Host:   route.Spec.Host,
+		Scheme: "http",
+	}
+	glog.V(2).Infof("waiting for good response from %s", url.String())
+	err = wait.Poll(1*time.Second, m.Config.AvailabilityTimeout.Duration, wait.ConditionFunc(func() (done bool, err error) {
 		client := http.Client{Timeout: 1 * time.Second}
-		url := &url.URL{
-			Host:   route.Spec.Host,
-			Scheme: "http",
-		}
 		resp, err := client.Get(url.String())
 		if err != nil {
 			glog.V(3).Infof("received error response from %q: %v", url.String(), err)
@@ -210,38 +212,40 @@ func (m *AppCreateAvailabilityMonitor) runTest() error {
 		return true, nil
 	}))
 	if err != nil {
-		return fmt.Errorf("timed out waiting for app to become availabile at %q: %v", m.Config.Check.Route, err)
+		return fmt.Errorf("timed out waiting for app route %q to become availabile at %q: %v", routeName, url.String(), err)
 	}
-	glog.V(2).Infof("got success response from route %q", m.Config.Check.Route)
+	glog.V(2).Infof("got success response from %s", url.String())
 	return nil
 }
 
-// setupWorkspace creates a project to hold an individual test's resources.
+// createProject creates a project to hold an individual test's resources.
+// Returns the generated name of the project.
 // TODO: Add prometheus metrics for timing and errors.
-func (m *AppCreateAvailabilityMonitor) setupWorkspace() error {
+func (m *AppCreateAvailabilityMonitor) createProject() (string, error) {
+	name := "monitor-app-create-" + utilrand.String(4)
 	_, err := m.Client.ProjectClient.ProjectRequests().Create(
 		&projectv1.ProjectRequest{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: m.Config.Check.Namespace,
+				Name: name,
 			},
-			DisplayName: m.Config.Check.DisplayName,
+			DisplayName: "A temporary test project created by monitor-project-lifecycle app.",
 		},
 	)
 
 	if err != nil {
-		return fmt.Errorf("error creating project %q: %v", m.Config.Check.Namespace, err)
+		return "", fmt.Errorf("error creating project: %v", err)
 	}
 
-	return nil
+	return name, nil
 }
 
-// cleanupWorkspace deletes the project for a test.
+// deleteProject deletes the project for a test.
 // TODO: Add prometheus metrics for timing and errors.
-func (m *AppCreateAvailabilityMonitor) cleanupWorkspace() error {
+func (m *AppCreateAvailabilityMonitor) deleteProject(namespace string) error {
 	// Delete the project that contains the kube resources we've created
-	err := m.Client.ProjectClient.Projects().Delete(m.Config.Check.Namespace, &metav1.DeleteOptions{})
+	err := m.Client.ProjectClient.Projects().Delete(namespace, &metav1.DeleteOptions{})
 	if err != nil {
-		return fmt.Errorf("Failed to remove project %v: %v", m.Config.Check.Namespace, err)
+		return fmt.Errorf("error deleting project %q: %v", namespace, err)
 	}
 	return nil
 }

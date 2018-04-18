@@ -17,17 +17,12 @@ Here's an example config file:
 
 ```yaml
 listenAddress: "127.0.0.1:8080"
-check:
-  namespace: example
-  displayName: Workspace for monitor-project-lifecycle Test
-  route: django-psql-persistent
-runInterval: "1m"
-timeout:
-  templateCreation: "10m"
-  templateDeletion: "5m"
+runInterval: 1m
+availabilityTimeout: 5m
 template:
-  name: django-psql-persistent
   namespace: openshift
+  name: django-psql-persistent
+  availabilityRoute: django-psql-persistent
   parameters: # Empty, use template defaults
 ```
 
