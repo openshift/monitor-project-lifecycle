@@ -27,21 +27,23 @@ import (
 
 // Config is the configuration for the test runner.
 type Config struct {
+	// ListenAddress is the bind addr for the metrics server.
 	ListenAddress string `json:"listenAddress"`
-	Check         struct {
-		Namespace   string `json:"namespace"`
-		DisplayName string `json:"displayName"`
-		Route       string `json:"route"`
-	} `json:"check"`
+	// RunInterval is how often to repeat the test.
 	RunInterval Duration `json:"runInterval"`
-	Timeout     struct {
-		TemplateCreation Duration `json:"templateCreation"`
-		TemplateDeletion Duration `json:"templateDeletion"`
-	} `json:"timeout"`
+	// AvailabilityTimeout is how long to wait for the app route before giving up.
+	AvailabilityTimeout Duration `json:"availabilityTimeout"`
+	// Template configures a template to instantiate for the test.
 	Template struct {
-		Name       string            `json:"name"`
-		Namespace  string            `json:"namespace"`
+		// Name is the name of the template.
+		Name string `json:"name"`
+		// Namespace is where the template lives.
+		Namespace string `json:"namespace"`
+		// Parameters are passed to the template.
 		Parameters map[string]string `json:"parameters"`
+		// AvailabilityRoute is the name of a route produced by the template to
+		// assess availability.
+		AvailabilityRoute string `json:"availabilityRoute"`
 	} `json:"template"`
 }
 
