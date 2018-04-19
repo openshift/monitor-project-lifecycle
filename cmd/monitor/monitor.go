@@ -33,12 +33,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 var (
 	prefix = "monitor_app_create_"
+
+	nsAnnotationKey   = "openshift.io/monitoring-availability-test"
+	nsAnnotationValue = "monitor-app-create"
+	nsLabelKey        = "openshift-monitoring-test"
+	nsLabelValue      = "monitor-app-create"
 
 	lastTestDuration = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "test_duration_seconds",
@@ -89,24 +95,33 @@ func (m *AppCreateAvailabilityMonitor) Run() error {
 
 	// Start testing.
 	// TODO: timing/metrics
+	// TODO: Add a backoff instead of using wait.Until.
 	wait.Until(func() {
 		glog.V(2).Infof("starting a test")
+
+		errs := m.deleteMonitorProjects()
+		if errs != nil {
+			glog.Errorf("failed to clean up projects prior to test: %v", errs)
+			return
+		}
 
 		// Set up the project.
 		namespace, err := m.createProject()
 		if err != nil {
-			glog.Errorf("error creating project: %v", err)
+			glog.Errorf("error creating project %q: %v", namespace, err)
 			// try again next interval
 			return
 		}
 		glog.V(2).Infof("created project %q", namespace)
 
-		defer func() {
-			if err := m.deleteProject(namespace); err != nil {
-				glog.Errorf("error cleaning up project %q: %v", namespace, err)
+		defer func(project string) {
+			errs := m.deleteMonitorProjects()
+			if errs != nil {
+				glog.Errorf("Failed to clean up project %q following test: %v", project, errs)
+			} else {
+				glog.V(2).Infof("Project %q cleaned up", project)
 			}
-			glog.V(2).Infof("cleaned up")
-		}()
+		}(namespace)
 
 		// Run the test.
 		start := time.Now()
@@ -231,21 +246,56 @@ func (m *AppCreateAvailabilityMonitor) createProject() (string, error) {
 			DisplayName: "A temporary test project created by monitor-project-lifecycle app.",
 		},
 	)
-
 	if err != nil {
 		return "", fmt.Errorf("error creating project: %v", err)
+	}
+
+	// Add monitoring annotation and label to the namespace
+	ns, err := m.Client.CoreClient.Namespaces().Get(name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("error getting namespace: %v", err)
+	}
+
+	// TODO: Get decision from deads or jliggit what pattern we should use for the annotation name.
+	//       More info:  https://github.com/openshift/monitor-project-lifecycle/issues/24
+	ns.Annotations[nsAnnotationKey] = nsAnnotationValue
+
+	if ns.Labels == nil {
+		ns.Labels = make(map[string]string)
+	}
+
+	ns.Labels[nsLabelKey] = nsLabelValue
+
+	ns, err = m.Client.CoreClient.Namespaces().Update(ns)
+	if err != nil {
+		return "", fmt.Errorf("error updating namespace: %v", err)
 	}
 
 	return name, nil
 }
 
-// deleteProject deletes the project for a test.
+// deleteMonitorProjects deletes all test apps projects created by this app.
 // TODO: Add prometheus metrics for timing and errors.
-func (m *AppCreateAvailabilityMonitor) deleteProject(namespace string) error {
-	// Delete the project that contains the kube resources we've created
-	err := m.Client.ProjectClient.Projects().Delete(namespace, &metav1.DeleteOptions{})
+func (m *AppCreateAvailabilityMonitor) deleteMonitorProjects() error {
+	errors := make([]error, 0)
+
+	projects, err := m.Client.ProjectClient.Projects().List(metav1.ListOptions{
+		LabelSelector: nsLabelKey + "=" + nsLabelValue,
+	})
 	if err != nil {
-		return fmt.Errorf("error deleting project %q: %v", namespace, err)
+		return utilerrors.NewAggregate(append(errors, fmt.Errorf("error getting monitoring projects: %v", err)))
 	}
-	return nil
+
+	for _, project := range projects.Items {
+		// Before deleting the project, check for our annotation which ensures we created this project.
+		if val, ok := project.Annotations[nsAnnotationKey]; ok && val == nsAnnotationValue {
+			glog.V(2).Infof("Deleting monitoring project: %v", project.Name)
+			err := m.Client.ProjectClient.Projects().Delete(project.Name, &metav1.DeleteOptions{})
+			if err != nil {
+				errors = append(errors, fmt.Errorf("error deleting monitoring project %q: %v", project.Name, err))
+			}
+		}
+	}
+
+	return utilerrors.NewAggregate(errors)
 }
