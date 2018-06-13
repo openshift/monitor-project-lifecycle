@@ -84,7 +84,9 @@ verify-commits:
 #   make test-unit
 #   make test-unit WHAT=pkg/build TESTFLAGS=-v
 test-unit:
-	GOTEST_FLAGS="$(TESTFLAGS)" hack/test-go.sh $(WHAT) $(TESTS)
+	# TODO: When we actually create unit tests, remove the invasive hack tooling
+	# to get junit stuff out of GOPATH to fix this target.
+	#GOTEST_FLAGS="$(TESTFLAGS)" hack/test-go.sh $(WHAT) $(TESTS)
 .PHONY: test-unit
 
 # Remove all build artifacts.
